@@ -57,6 +57,7 @@ Install the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0), then
 - `TaskbarWidget.cs` – the taskbar panel (ring gauges) and its hover tooltip
 - `IconRenderer.cs` – draws the numbers into tray icons
 - `Levels.cs` – green / yellow / orange / red thresholds
+- `Fonts.cs` – the compact font (Bahnschrift SemiBold Condensed, with fallbacks)
 - `TrayContext.cs` – display modes, menu, background sampling thread
 - `.github/workflows/build.yml` – builds and smoke-tests the app on Windows for every push
 - `Settings.cs` – settings in `HKCU\Software\TaskbarMonitor`, startup entry in `HKCU\...\Run`

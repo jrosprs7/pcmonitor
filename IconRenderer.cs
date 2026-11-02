@@ -97,13 +97,12 @@ internal static class IconRenderer
     {
         // Start large and shrink until the glyphs fit.
         float px = bounds.Height * 1.3f;
-        using var family = new FontFamily("Segoe UI");
         using var path = new GraphicsPath();
         RectangleF tb;
         while (true)
         {
             path.Reset();
-            path.AddString(text, family, (int)FontStyle.Bold, px, PointF.Empty, StringFormat.GenericTypographic);
+            path.AddString(text, Fonts.Family, Fonts.Style, px, PointF.Empty, StringFormat.GenericTypographic);
             tb = path.GetBounds();
             if ((tb.Width <= bounds.Width - 1 && tb.Height <= bounds.Height - 1) || px < 4) break;
             px -= 0.5f;

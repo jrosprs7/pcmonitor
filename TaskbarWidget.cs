@@ -144,22 +144,23 @@ internal sealed class TaskbarWidget : Control
         // At 100% the ring is ~40px on a 48px Windows 11 taskbar; the default 64% makes it ~26px.
         _ring = Math.Max(12, (int)Math.Round((taskbarHeight - PadY(taskbarHeight) * 2) * _scale));
 
-        // One text size for every ring: the largest at which the widest text still fits inside.
-        using var family = new FontFamily("Segoe UI");
-        using var path = new GraphicsPath();
+        // One text size for every ring: the largest at which the widest text still fits.
         // Text may spill a little past the inner edge of the ring (like the original sketch),
-        // but never drops below 8px so it stays readable on small rings.
-        float px = _ring * 0.45f;
+        // but is capped in height and never drops below 8px so it stays readable.
+        using var path = new GraphicsPath();
+        float px = _ring * 0.75f;
         while (px > 8)
         {
-            float widest = 0;
+            float widest = 0, tallest = 0;
             foreach (var t in new[] { "CPU", "GPU", "RAM", "TEMP", "100%", "100°" })
             {
                 path.Reset();
-                path.AddString(t, family, (int)FontStyle.Bold, px, PointF.Empty, StringFormat.GenericTypographic);
-                widest = Math.Max(widest, path.GetBounds().Width);
+                path.AddString(t, Fonts.Family, Fonts.Style, px, PointF.Empty, StringFormat.GenericTypographic);
+                var b = path.GetBounds();
+                widest = Math.Max(widest, b.Width);
+                tallest = Math.Max(tallest, b.Height);
             }
-            if (widest <= _ring * 0.90f) break;
+            if (widest <= _ring * 0.90f && tallest <= _ring * 0.48f) break;
             px -= 0.5f;
         }
         _textPx = px;
@@ -234,7 +235,10 @@ internal sealed class TaskbarWidget : Control
         int h = Height;
         float thick = Math.Max(4f, _ring * 0.22f); // ring band: ~6px on a 26px ring
 
-        using var family = new FontFamily("Segoe UI");
+        // Outline ("stroke") around the text in the opposite colour, so it stays clear over the ring.
+        Color halo = _lightTheme ? Color.FromArgb(250, 250, 250) : Color.FromArgb(12, 12, 12);
+        using var haloPen = new Pen(halo, Math.Max(2f, _textPx * 0.22f)) { LineJoin = LineJoin.Round };
+
         for (int i = 0; i < _items.Count; i++)
         {
             var item = _items[i];
@@ -258,7 +262,7 @@ internal sealed class TaskbarWidget : Control
             // Label (or number) centred on its actual glyph bounds.
             string centre = _ringShowsNumber ? item.ValueText : item.Label;
             using var path = new GraphicsPath();
-            path.AddString(centre, family, (int)FontStyle.Bold, _textPx, PointF.Empty, StringFormat.GenericTypographic);
+            path.AddString(centre, Fonts.Family, Fonts.Style, _textPx, PointF.Empty, StringFormat.GenericTypographic);
             RectangleF tb = path.GetBounds();
             using (var m = new Matrix())
             {
@@ -266,6 +270,7 @@ internal sealed class TaskbarWidget : Control
                 path.Transform(m);
             }
             using var brush = new SolidBrush(item.Value is null ? dim : text);
+            g.DrawPath(haloPen, path);
             g.FillPath(brush, path);
         }
     }

@@ -35,6 +35,7 @@ internal sealed class TaskbarWidget : Control
     private int _lastHeight = -1;
     private int _ring;          // ring diameter in pixels
     private float _textPx;      // font size for the text inside the rings
+    private float _scale = 0.8f; // ring size relative to the full taskbar height
     private bool _ringShowsNumber;
 
     // Windows 10: the taskbar button area (ReBarWindow32) is shrunk so it doesn't run under us.
@@ -84,6 +85,19 @@ internal sealed class TaskbarWidget : Control
         static (string, string, int?, Color) Key(PanelItem i) => (i.Label, i.ValueText, i.Value is float f ? (int)Math.Round(f) : null, i.RingColor);
     }
 
+    /// <summary>Ring size as a fraction of the largest ring that fits the taskbar (e.g. 0.8 = 80%).</summary>
+    public float RingScale
+    {
+        get => _scale;
+        set
+        {
+            _scale = Math.Clamp(value, 0.5f, 1f);
+            _lastHeight = -1; // force the ring size and text to be recomputed
+            Reposition();
+            Invalidate();
+        }
+    }
+
     public bool RingShowsNumber
     {
         get => _ringShowsNumber;
@@ -104,7 +118,7 @@ internal sealed class TaskbarWidget : Control
 
         int h = tb.Height;
         int n = Math.Max(1, _items.Count);
-        int w = PadX(h) * 2 + n * _ring + (n - 1) * RingGap(h);
+        int w = PadX * 2 + n * _ring + (n - 1) * RingGap;
         int screenX = tr.Left - w - Math.Max(2, h / 12);
         if (screenX <= tb.Left + tb.Width / 3) return false; // not enough room
 
@@ -119,14 +133,16 @@ internal sealed class TaskbarWidget : Control
         return true;
     }
 
-    private static int PadX(int h) => Math.Max(2, h / 16);
     private static int PadY(int h) => Math.Max(2, h / 12);
-    private static int RingGap(int h) => Math.Max(3, h / 10);
+    // Spacing scales with the ring so smaller rings sit closer together.
+    private int PadX => Math.Max(2, _ring / 12);
+    private int RingGap => Math.Max(3, _ring / 8);
 
     private void ApplyFont(int taskbarHeight)
     {
         _lastHeight = taskbarHeight;
-        _ring = taskbarHeight - PadY(taskbarHeight) * 2; // ~40px on a 48px Windows 11 taskbar
+        // At 100% the ring is ~40px on a 48px Windows 11 taskbar; the default 80% makes it ~32px.
+        _ring = Math.Max(12, (int)Math.Round((taskbarHeight - PadY(taskbarHeight) * 2) * _scale));
 
         // One text size for every ring: the largest at which the widest text still fits inside.
         using var family = new FontFamily("Segoe UI");
@@ -220,7 +236,7 @@ internal sealed class TaskbarWidget : Control
         for (int i = 0; i < _items.Count; i++)
         {
             var item = _items[i];
-            var box = new RectangleF(PadX(h) + i * (_ring + RingGap(h)), PadY(h), _ring, _ring);
+            var box = new RectangleF(PadX + i * (_ring + RingGap), (h - _ring) / 2f, _ring, _ring);
             var arc = RectangleF.Inflate(box, -thick / 2, -thick / 2);
 
             // Track, then the filled part clockwise from 12 o'clock.

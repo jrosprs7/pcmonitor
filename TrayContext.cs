@@ -55,6 +55,7 @@ internal sealed class TrayContext : ApplicationContext
     private readonly ToolStripMenuItem _displayMenu;
     private readonly ToolStripMenuItem _showMenu;
     private readonly ToolStripMenuItem _ringNumberItem;
+    private int _ringSize;
     private readonly Control _ui; // marshals sampler results onto the UI thread
 
     private readonly Thread _sampler;
@@ -95,6 +96,21 @@ internal sealed class TrayContext : ApplicationContext
             if (_widget is not null) _widget.RingShowsNumber = _ringNumberItem.Checked;
         };
 
+        _ringSize = Settings.RingSizePercent;
+        var sizeMenu = new ToolStripMenuItem("Size");
+        foreach (int pct in new[] { 70, 80, 90, 100 })
+        {
+            var item = new ToolStripMenuItem($"{pct}%") { Tag = pct, Checked = pct == _ringSize };
+            item.Click += (_, _) =>
+            {
+                _ringSize = pct;
+                Settings.RingSizePercent = pct;
+                foreach (ToolStripMenuItem i in sizeMenu.DropDownItems) i.Checked = (int)i.Tag! == pct;
+                if (_widget is not null) _widget.RingScale = pct / 100f;
+            };
+            sizeMenu.DropDownItems.Add(item);
+        }
+
         var intervalMenu = new ToolStripMenuItem("Update every");
         foreach (int ms in Intervals)
         {
@@ -117,6 +133,7 @@ internal sealed class TrayContext : ApplicationContext
             _displayMenu,
             _showMenu,
             _ringNumberItem,
+            sizeMenu,
             intervalMenu,
             startupItem,
             new ToolStripMenuItem("Open Task Manager", null, (_, _) => OpenTaskManager()),
@@ -198,6 +215,7 @@ internal sealed class TrayContext : ApplicationContext
                 else
                 {
                     _widget.RingShowsNumber = _ringNumberItem.Checked;
+                    _widget.RingScale = _ringSize / 100f;
                     _widget.SetValues(PanelItems(_last), BuildTooltip(_last));
                 }
             }

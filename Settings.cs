@@ -50,6 +50,13 @@ internal static class Settings
         set => Set("ShownMetrics", (int)value);
     }
 
+    /// <summary>Taskbar panel ring size in percent (70-100).</summary>
+    public static int RingSizePercent
+    {
+        get => Math.Clamp(Get("RingSizePercent", 80), 50, 100);
+        set => Set("RingSizePercent", value);
+    }
+
     /// <summary>Taskbar panel: show the number (23%) instead of the label (CPU) inside each ring.</summary>
     public static bool RingShowsNumber
     {

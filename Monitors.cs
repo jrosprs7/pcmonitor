@@ -290,3 +290,35 @@ internal sealed class GpuTemperature : IDisposable
 
     public void Dispose() => CloseAll();
 }
+
+/// <summary>Physical memory in use, matching Task Manager's "In use" (total minus available).</summary>
+internal static class RamMonitor
+{
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MEMORYSTATUSEX
+    {
+        public uint dwLength;
+        public uint dwMemoryLoad;
+        public ulong ullTotalPhys;
+        public ulong ullAvailPhys;
+        public ulong ullTotalPageFile;
+        public ulong ullAvailPageFile;
+        public ulong ullTotalVirtual;
+        public ulong ullAvailVirtual;
+        public ulong ullAvailExtendedVirtual;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX status);
+
+    /// <summary>Returns (percent used, GB used, GB total), or null if the call fails.</summary>
+    public static (float Percent, double UsedGB, double TotalGB)? Read()
+    {
+        var s = new MEMORYSTATUSEX { dwLength = (uint)Marshal.SizeOf<MEMORYSTATUSEX>() };
+        if (!GlobalMemoryStatusEx(ref s) || s.ullTotalPhys == 0) return null;
+
+        const double GB = 1024.0 * 1024 * 1024; // Task Manager's "GB" is really GiB
+        ulong used = s.ullTotalPhys - Math.Min(s.ullAvailPhys, s.ullTotalPhys);
+        return ((float)(100.0 * used / s.ullTotalPhys), used / GB, s.ullTotalPhys / GB);
+    }
+}

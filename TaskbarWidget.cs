@@ -5,11 +5,14 @@ using Microsoft.Win32;
 
 namespace TaskbarMonitor;
 
+/// <summary>One column on the taskbar panel.</summary>
+internal readonly record struct PanelItem(string Label, float? Value, Color Accent);
+
 /// <summary>
 /// A small rectangular panel placed on the taskbar, just left of the notification area:
 ///
-///     CPU  23%
-///     GPU  45%
+///     CPU  GPU  RAM
+///     23%  45%  61%
 ///
 /// Windows doesn't let tray icons be wider than a square, so this is a real child window of the
 /// taskbar (the same technique tools like TrafficMonitor use). It moves and hides with the taskbar,
@@ -23,12 +26,13 @@ internal sealed class TaskbarWidget : Control
     private readonly Action _onDoubleClick;
     private readonly HoverTip _tip = new();
 
-    private float? _cpu, _gpu;
+    private IReadOnlyList<PanelItem> _items = Array.Empty<PanelItem>();
     private string _tipText = "";
     private bool _lightTheme;
     private Color _key; // transparent color for the layered window
     private int _lastHeight = -1;
-    private int _labelWidth, _valueWidth;
+    private int _colWidth;
+    private Font? _labelFont;
 
     // Windows 10: the taskbar button area (ReBarWindow32) is shrunk so it doesn't run under us.
     private IntPtr _rebar;
@@ -64,16 +68,17 @@ internal sealed class TaskbarWidget : Control
     /// <summary>True while the taskbar we're attached to still exists (Explorer hasn't restarted).</summary>
     public bool IsAlive => IsHandleCreated && IsWindow(_taskbar) && FindWindow("Shell_TrayWnd", null) == _taskbar;
 
-    public void SetValues(float? cpu, float? gpu, string tooltip)
+    public void SetValues(IReadOnlyList<PanelItem> items, string tooltip)
     {
-        bool changed = Round(cpu) != Round(_cpu) || Round(gpu) != Round(_gpu);
-        _cpu = cpu;
-        _gpu = gpu;
+        bool layoutChanged = items.Count != _items.Count;
+        bool changed = layoutChanged || !items.Select(Key).SequenceEqual(_items.Select(Key));
+        _items = items;
         _tipText = tooltip;
+        if (layoutChanged) Reposition();
         if (changed) Invalidate();
         if (_tip.Visible) _tip.SetText(_tipText, this);
 
-        static int? Round(float? v) => v is float f ? (int)Math.Round(f) : null;
+        static (string, int?) Key(PanelItem i) => (i.Label, i.Value is float f ? (int)Math.Round(f) : null);
     }
 
     /// <summary>Re-reads the taskbar layout and moves the widget. Returns false if it can't be placed.</summary>
@@ -89,7 +94,8 @@ internal sealed class TaskbarWidget : Control
         if (UpdateTheme() || tb.Height != _lastHeight) ApplyFont(tb.Height);
 
         int h = tb.Height;
-        int w = PadX(h) * 2 + _labelWidth + Gap(h) + _valueWidth;
+        int n = Math.Max(1, _items.Count);
+        int w = PadX(h) * 2 + n * _colWidth + (n - 1) * ColGap(h);
         int screenX = tr.Left - w - Math.Max(2, h / 12);
         if (screenX <= tb.Left + tb.Width / 3) return false; // not enough room
 
@@ -104,23 +110,28 @@ internal sealed class TaskbarWidget : Control
         return true;
     }
 
-    private static int PadX(int h) => Math.Max(4, h / 8);
-    private static int Gap(int h) => Math.Max(4, h / 7);
+    private static int PadX(int h) => Math.Max(3, h / 10);
+    private static int ColGap(int h) => Math.Max(4, h / 6);
 
     private void ApplyFont(int taskbarHeight)
     {
         _lastHeight = taskbarHeight;
-        float px = Math.Max(9f, taskbarHeight * 0.30f); // ~14px on a 48px Windows 11 taskbar
-        var old = Font;
-        Font = new Font("Segoe UI", px, FontStyle.Bold, GraphicsUnit.Pixel);
-        if (!ReferenceEquals(old, Control.DefaultFont)) old.Dispose();
+        float px = Math.Max(9f, taskbarHeight * 0.29f); // ~14px on a 48px Windows 11 taskbar
 
+        var oldValue = Font;
+        Font = new Font("Segoe UI", px, FontStyle.Bold, GraphicsUnit.Pixel);
+        if (!ReferenceEquals(oldValue, Control.DefaultFont)) oldValue.Dispose();
+        _labelFont?.Dispose();
+        _labelFont = new Font("Segoe UI", px * 0.92f, FontStyle.Regular, GraphicsUnit.Pixel);
+
+        // Fixed column width so the panel doesn't jitter as numbers change.
         using var bmp = new Bitmap(1, 1);
         using var g = Graphics.FromImage(bmp);
         var fmt = StringFormat.GenericTypographic;
-        _labelWidth = (int)Math.Ceiling(Math.Max(g.MeasureString("CPU", Font, 999, fmt).Width,
-                                                 g.MeasureString("GPU", Font, 999, fmt).Width));
-        _valueWidth = (int)Math.Ceiling(g.MeasureString("100%", Font, 999, fmt).Width);
+        float widest = g.MeasureString("100%", Font, 999, fmt).Width;
+        foreach (var label in new[] { "CPU", "GPU", "RAM" })
+            widest = Math.Max(widest, g.MeasureString(label, _labelFont, 999, fmt).Width);
+        _colWidth = (int)Math.Ceiling(widest) + 1;
     }
 
     /// <returns>true if the theme changed.</returns>
@@ -182,41 +193,46 @@ internal sealed class TaskbarWidget : Control
     {
         var g = e.Graphics;
         g.Clear(_key);
+        if (_labelFont is null) return;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
 
-        int h = Height;
-        int pad = PadX(h);
-        int vpad = Math.Max(2, h / 10);
-        int rowH = (h - vpad * 2) / 2;
-
-        DrawRow(g, "CPU", _cpu, TrayContext.CpuAccent, new Rectangle(pad, vpad, Width - pad * 2, rowH));
-        DrawRow(g, "GPU", _gpu, TrayContext.GpuAccent, new Rectangle(pad, vpad + rowH, Width - pad * 2, rowH));
-    }
-
-    private void DrawRow(Graphics g, string label, float? value, Color accent, Rectangle r)
-    {
         Color text = _lightTheme ? Color.FromArgb(20, 20, 20) : Color.FromArgb(245, 245, 245);
         Color track = _lightTheme ? Color.FromArgb(205, 205, 205) : Color.FromArgb(75, 75, 75);
-        bool hot = value >= 90;
 
-        int barH = Math.Max(2, r.Height / 9);
-        var textRect = new RectangleF(r.X, r.Y, r.Width, r.Height - barH);
-        using var fmtLeft = new StringFormat(StringFormat.GenericTypographic) { LineAlignment = StringAlignment.Center };
-        using var fmtRight = new StringFormat(fmtLeft) { Alignment = StringAlignment.Far };
+        int h = Height;
+        int vpad = Math.Max(2, h / 8);
+        int barH = Math.Max(2, h / 24);
+        int rowH = (h - vpad * 2 - barH - 1) / 2;
+        int barY = vpad + rowH * 2 + 1;
 
-        using (var b = new SolidBrush(accent)) g.DrawString(label, Font, b, textRect, fmtLeft);
-        string v = value is float f ? $"{(int)Math.Round(f)}%" : "--";
-        using (var b = new SolidBrush(hot ? IconRenderer.Hot : text)) g.DrawString(v, Font, b, textRect, fmtRight);
-
-        // Thin usage bar under the row.
-        int barY = r.Bottom - barH;
-        using (var b = new SolidBrush(track)) g.FillRectangle(b, r.X, barY, r.Width, barH);
-        if (value is float val && val > 0)
+        using var center = new StringFormat(StringFormat.GenericTypographic)
         {
-            int fill = (int)Math.Round(r.Width * Math.Min(val, 100) / 100f);
-            using var b = new SolidBrush(hot ? IconRenderer.Hot : accent);
-            g.FillRectangle(b, r.X, barY, fill, barH);
+            Alignment = StringAlignment.Center,
+            LineAlignment = StringAlignment.Center,
+        };
+
+        for (int i = 0; i < _items.Count; i++)
+        {
+            var item = _items[i];
+            int x = PadX(h) + i * (_colWidth + ColGap(h));
+            bool hot = item.Value >= 90;
+
+            using (var b = new SolidBrush(item.Accent))
+                g.DrawString(item.Label, _labelFont, b, new RectangleF(x, vpad, _colWidth, rowH), center);
+
+            string v = item.Value is float f ? $"{(int)Math.Round(f)}%" : "--";
+            using (var b = new SolidBrush(hot ? IconRenderer.Hot : text))
+                g.DrawString(v, Font, b, new RectangleF(x, vpad + rowH, _colWidth, rowH), center);
+
+            // Thin usage bar under the column.
+            using (var b = new SolidBrush(track)) g.FillRectangle(b, x, barY, _colWidth, barH);
+            if (item.Value is float val && val > 0)
+            {
+                int fill = (int)Math.Round(_colWidth * Math.Min(val, 100) / 100f);
+                using var b = new SolidBrush(hot ? IconRenderer.Hot : item.Accent);
+                g.FillRectangle(b, x, barY, fill, barH);
+            }
         }
     }
 
@@ -287,6 +303,7 @@ internal sealed class TaskbarWidget : Control
         {
             RestoreWin10TaskButtons();
             _tip.Dispose();
+            _labelFont?.Dispose();
         }
         base.Dispose(disposing);
     }

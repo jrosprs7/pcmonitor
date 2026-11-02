@@ -30,14 +30,17 @@ internal static class IconRenderer
         });
     }
 
-    /// <summary>CPU on the top row, GPU on the bottom row. Each fill grows left to right.</summary>
-    public static Icon RenderCombined(float? cpu, Color cpuAccent, float? gpu, Color gpuAccent)
+    /// <summary>One row per metric (top to bottom). Each fill grows left to right.</summary>
+    public static Icon RenderCombined(IReadOnlyList<(float? Value, Color Accent)> rows)
     {
         return Draw((g, w, h) =>
         {
-            int top = h / 2;
-            DrawRow(g, new Rectangle(0, 0, w, top), cpu, cpuAccent);
-            DrawRow(g, new Rectangle(0, top, w, h - top), gpu, gpuAccent);
+            int n = Math.Max(1, rows.Count);
+            for (int i = 0; i < rows.Count; i++)
+            {
+                int y0 = h * i / n, y1 = h * (i + 1) / n;
+                DrawRow(g, new Rectangle(0, y0, w, y1 - y0), rows[i].Value, rows[i].Accent);
+            }
         });
 
         static void DrawRow(Graphics g, Rectangle r, float? value, Color accent)
@@ -49,7 +52,7 @@ internal static class IconRenderer
                 using var fb = new SolidBrush(Color.FromArgb(220, v >= 90 ? Hot : accent));
                 g.FillRectangle(fb, r.X, r.Y, fill, r.Height);
             }
-            // Thin colored stripe on the left so the two rows are told apart even at 0%.
+            // Thin colored stripe on the left so the rows can be told apart even at 0%.
             using (var stripe = new SolidBrush(accent))
                 g.FillRectangle(stripe, r.X, r.Y, Math.Max(1, r.Width / 12), r.Height);
             DrawFittedText(g, Format(value), r);

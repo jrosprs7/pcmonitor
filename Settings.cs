@@ -5,10 +5,18 @@ namespace TaskbarMonitor;
 internal enum DisplayMode
 {
     TaskbarWidget = 0, // one rectangular panel on the taskbar
-    CombinedIcon = 1,  // one tray icon, CPU on top / GPU below
-    TwoIcons = 2,      // separate CPU and GPU tray icons
-    CpuIconOnly = 3,
-    GpuIconOnly = 4,
+    CombinedIcon = 1,  // one tray icon, one row per metric
+    SeparateIcons = 2, // one tray icon per metric
+}
+
+[Flags]
+internal enum Metrics
+{
+    None = 0,
+    Cpu = 1,
+    Gpu = 2,
+    Ram = 4,
+    All = Cpu | Gpu | Ram,
 }
 
 /// <summary>Small settings store in HKCU\Software\TaskbarMonitor.</summary>
@@ -26,8 +34,19 @@ internal static class Settings
 
     public static DisplayMode Mode
     {
-        get => Enum.IsDefined(typeof(DisplayMode), Get("DisplayMode", 0)) ? (DisplayMode)Get("DisplayMode", 0) : DisplayMode.TaskbarWidget;
-        set => Set("DisplayMode", (int)value);
+        get => Enum.IsDefined(typeof(DisplayMode), Get("Display", 0)) ? (DisplayMode)Get("Display", 0) : DisplayMode.TaskbarWidget;
+        set => Set("Display", (int)value);
+    }
+
+    /// <summary>Which metrics to show on the panel / icons (the tooltip always shows everything).</summary>
+    public static Metrics Shown
+    {
+        get
+        {
+            var m = (Metrics)Get("Metrics", (int)Metrics.All) & Metrics.All;
+            return m == Metrics.None ? Metrics.All : m;
+        }
+        set => Set("Metrics", (int)value);
     }
 
     public static bool StartWithWindows

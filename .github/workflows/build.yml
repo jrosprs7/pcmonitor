@@ -9,6 +9,8 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: write   # only used to push screenshots to the ci-screenshots branch
     steps:
       - uses: actions/checkout@v4
 
@@ -66,3 +68,20 @@ jobs:
         with:
           name: TaskbarMonitor-small
           path: dist/small/TaskbarMonitor.exe
+
+      # Also keep the latest screenshots on a separate branch so they can be viewed without
+      # downloading artifacts (github.com/<owner>/<repo>/tree/ci-screenshots).
+      - name: Publish screenshots to ci-screenshots branch
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          $tmp = Join-Path $env:RUNNER_TEMP shots
+          Copy-Item screenshots $tmp -Recurse
+          git checkout --orphan ci-screenshots
+          git rm -rf --quiet .
+          Copy-Item "$tmp\*.png" .
+          git add *.png
+          git commit -m "Screenshots for $env:GITHUB_SHA"
+          git push -f origin ci-screenshots

@@ -35,7 +35,7 @@ internal sealed class TaskbarWidget : Control
     private int _lastHeight = -1;
     private int _ring;          // ring diameter in pixels
     private float _textPx;      // font size for the text inside the rings
-    private float _scale = 0.8f; // ring size relative to the full taskbar height
+    private float _scale = 0.64f; // ring size relative to the full taskbar height
     private bool _ringShowsNumber;
 
     // Windows 10: the taskbar button area (ReBarWindow32) is shrunk so it doesn't run under us.
@@ -141,14 +141,16 @@ internal sealed class TaskbarWidget : Control
     private void ApplyFont(int taskbarHeight)
     {
         _lastHeight = taskbarHeight;
-        // At 100% the ring is ~40px on a 48px Windows 11 taskbar; the default 80% makes it ~32px.
+        // At 100% the ring is ~40px on a 48px Windows 11 taskbar; the default 64% makes it ~26px.
         _ring = Math.Max(12, (int)Math.Round((taskbarHeight - PadY(taskbarHeight) * 2) * _scale));
 
         // One text size for every ring: the largest at which the widest text still fits inside.
         using var family = new FontFamily("Segoe UI");
         using var path = new GraphicsPath();
+        // Text may spill a little past the inner edge of the ring (like the original sketch),
+        // but never drops below 8px so it stays readable on small rings.
         float px = _ring * 0.45f;
-        while (px > 6)
+        while (px > 8)
         {
             float widest = 0;
             foreach (var t in new[] { "CPU", "GPU", "RAM", "TEMP", "100%", "100°" })
@@ -157,7 +159,7 @@ internal sealed class TaskbarWidget : Control
                 path.AddString(t, family, (int)FontStyle.Bold, px, PointF.Empty, StringFormat.GenericTypographic);
                 widest = Math.Max(widest, path.GetBounds().Width);
             }
-            if (widest <= _ring * 0.80f) break;
+            if (widest <= _ring * 0.90f) break;
             px -= 0.5f;
         }
         _textPx = px;
@@ -230,7 +232,7 @@ internal sealed class TaskbarWidget : Control
         Color track = _lightTheme ? Color.FromArgb(210, 210, 210) : Color.FromArgb(70, 70, 70);
 
         int h = Height;
-        float thick = Math.Max(3f, _ring * 0.15f);
+        float thick = Math.Max(4f, _ring * 0.22f); // ring band: ~6px on a 26px ring
 
         using var family = new FontFamily("Segoe UI");
         for (int i = 0; i < _items.Count; i++)

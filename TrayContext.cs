@@ -98,7 +98,7 @@ internal sealed class TrayContext : ApplicationContext
 
         _ringSize = Settings.RingSizePercent;
         var sizeMenu = new ToolStripMenuItem("Size");
-        foreach (int pct in new[] { 70, 80, 90, 100 })
+        foreach (int pct in new[] { 50, 64, 80, 100 })
         {
             var item = new ToolStripMenuItem($"{pct}%") { Tag = pct, Checked = pct == _ringSize };
             item.Click += (_, _) =>

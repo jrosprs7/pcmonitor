@@ -20,7 +20,7 @@ The TEMP ring treats 100 °C as full. It follows your light/dark taskbar theme. 
 - Right-click for the menu:
   - **Display**: *Taskbar panel* (default), *One tray icon* (a square icon with one row per metric), or *Separate tray icons* (one icon per metric; the strip along the top tells them apart: blue CPU, green GPU, purple RAM, pink TEMP)
   - **Show**: tick CPU, GPU, RAM and/or TEMP to choose what the panel or icons show (the tooltip always shows everything)
-  - **Numbers inside rings**, **Size** of the rings (70 / 80 / 90 / 100%, default 80%), **Update every** 0.5 / 1 / 2 / 5 s, **Start with Windows**, **Exit**
+  - **Numbers inside rings**, **Size** of the rings (50 / 64 / 80 / 100%, default 64%), **Update every** 0.5 / 1 / 2 / 5 s, **Start with Windows**, **Exit**
 
 The single tray icon is easiest to read with two metrics; with three or four, the rows get very small unless your display is scaled above 100%.
 

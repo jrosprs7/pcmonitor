@@ -7,14 +7,13 @@ namespace TaskbarMonitor;
 /// <summary>Draws usage numbers into small tray icons.</summary>
 internal static class IconRenderer
 {
-    public static readonly Color Hot = Color.FromArgb(220, 50, 47); // used at >= 90%
-
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool DestroyIcon(IntPtr hIcon);
 
-    /// <summary>One metric per icon. The fill rises from the bottom.</summary>
+    /// <summary>One metric per icon. The fill rises from the bottom in the level color;
+    /// a strip along the top in the metric's own color tells the icons apart.</summary>
     /// <param name="value">0-100, or null to show "--".</param>
-    public static Icon Render(float? value, Color accent)
+    public static Icon Render(float? value, Color fill, Color identity)
     {
         return Draw((g, w, h) =>
         {
@@ -22,16 +21,19 @@ internal static class IconRenderer
             DrawBackground(g, rect);
             if (value is float v && v > 0)
             {
-                int fill = (int)Math.Round(h * v / 100f);
-                using var fb = new SolidBrush(Color.FromArgb(200, v >= 90 ? Hot : accent));
-                g.FillRectangle(fb, 0, h - fill, w, fill);
+                int f = (int)Math.Round(h * Math.Min(v, 100) / 100f);
+                using var fb = new SolidBrush(Color.FromArgb(210, fill));
+                g.FillRectangle(fb, 0, h - f, w, f);
             }
+            using (var strip = new SolidBrush(identity))
+                g.FillRectangle(strip, 0, 0, w, Math.Max(2, h / 8));
             DrawFittedText(g, Format(value), rect);
         });
     }
 
-    /// <summary>One row per metric (top to bottom). Each fill grows left to right.</summary>
-    public static Icon RenderCombined(IReadOnlyList<(float? Value, Color Accent)> rows)
+    /// <summary>One row per metric (top to bottom). Each fill grows left to right in the level color;
+    /// a stripe on the left in the metric's own color tells the rows apart.</summary>
+    public static Icon RenderCombined(IReadOnlyList<(float? Value, Color Fill, Color Identity)> rows)
     {
         return Draw((g, w, h) =>
         {
@@ -39,23 +41,22 @@ internal static class IconRenderer
             for (int i = 0; i < rows.Count; i++)
             {
                 int y0 = h * i / n, y1 = h * (i + 1) / n;
-                DrawRow(g, new Rectangle(0, y0, w, y1 - y0), rows[i].Value, rows[i].Accent);
+                DrawRow(g, new Rectangle(0, y0, w, y1 - y0), rows[i]);
             }
         });
 
-        static void DrawRow(Graphics g, Rectangle r, float? value, Color accent)
+        static void DrawRow(Graphics g, Rectangle r, (float? Value, Color Fill, Color Identity) row)
         {
             DrawBackground(g, r);
-            if (value is float v && v > 0)
+            if (row.Value is float v && v > 0)
             {
-                int fill = (int)Math.Round(r.Width * v / 100f);
-                using var fb = new SolidBrush(Color.FromArgb(220, v >= 90 ? Hot : accent));
-                g.FillRectangle(fb, r.X, r.Y, fill, r.Height);
+                int f = (int)Math.Round(r.Width * Math.Min(v, 100) / 100f);
+                using var fb = new SolidBrush(Color.FromArgb(220, row.Fill));
+                g.FillRectangle(fb, r.X, r.Y, f, r.Height);
             }
-            // Thin colored stripe on the left so the rows can be told apart even at 0%.
-            using (var stripe = new SolidBrush(accent))
+            using (var stripe = new SolidBrush(row.Identity))
                 g.FillRectangle(stripe, r.X, r.Y, Math.Max(1, r.Width / 12), r.Height);
-            DrawFittedText(g, Format(value), r);
+            DrawFittedText(g, Format(row.Value), r);
         }
     }
 

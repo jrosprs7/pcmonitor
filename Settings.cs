@@ -16,7 +16,8 @@ internal enum Metrics
     Cpu = 1,
     Gpu = 2,
     Ram = 4,
-    All = Cpu | Gpu | Ram,
+    Temp = 8, // GPU temperature
+    All = Cpu | Gpu | Ram | Temp,
 }
 
 /// <summary>Small settings store in HKCU\Software\TaskbarMonitor.</summary>
@@ -43,10 +44,17 @@ internal static class Settings
     {
         get
         {
-            var m = (Metrics)Get("Metrics", (int)Metrics.All) & Metrics.All;
+            var m = (Metrics)Get("ShownMetrics", (int)Metrics.All) & Metrics.All;
             return m == Metrics.None ? Metrics.All : m;
         }
-        set => Set("Metrics", (int)value);
+        set => Set("ShownMetrics", (int)value);
+    }
+
+    /// <summary>Taskbar panel: show the number (23%) instead of the label (CPU) inside each ring.</summary>
+    public static bool RingShowsNumber
+    {
+        get => Get("RingShowsNumber", 0) != 0;
+        set => Set("RingShowsNumber", value ? 1 : 0);
     }
 
     public static bool StartWithWindows

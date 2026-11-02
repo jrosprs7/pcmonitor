@@ -5,14 +5,16 @@ using Microsoft.Win32;
 
 namespace TaskbarMonitor;
 
-/// <summary>One column on the taskbar panel.</summary>
-internal readonly record struct PanelItem(string Label, float? Value, Color Accent);
+/// <summary>One ring gauge on the taskbar panel.</summary>
+/// <param name="Value">Ring fill, 0-100 (null = unavailable).</param>
+/// <param name="ValueText">Text shown in the ring when "number" mode is on, e.g. "23%" or "61°".</param>
+/// <param name="RingColor">Fill color for the ring (green/yellow/orange/red by level).</param>
+internal readonly record struct PanelItem(string Label, float? Value, string ValueText, Color RingColor);
 
 /// <summary>
-/// A small rectangular panel placed on the taskbar, just left of the notification area:
-///
-///     CPU  GPU  RAM
-///     23%  45%  61%
+/// A small rectangular panel placed on the taskbar, just left of the notification area, holding
+/// one ring gauge per metric. Each ring fills clockwise from 12 o'clock with the usage, and the
+/// middle shows the label (CPU, GPU, RAM, TEMP) or, optionally, the number.
 ///
 /// Windows doesn't let tray icons be wider than a square, so this is a real child window of the
 /// taskbar (the same technique tools like TrafficMonitor use). It moves and hides with the taskbar,
@@ -31,8 +33,9 @@ internal sealed class TaskbarWidget : Control
     private bool _lightTheme;
     private Color _key; // transparent color for the layered window
     private int _lastHeight = -1;
-    private int _colWidth;
-    private Font? _labelFont;
+    private int _ring;          // ring diameter in pixels
+    private float _textPx;      // font size for the text inside the rings
+    private bool _ringShowsNumber;
 
     // Windows 10: the taskbar button area (ReBarWindow32) is shrunk so it doesn't run under us.
     private IntPtr _rebar;
@@ -78,7 +81,13 @@ internal sealed class TaskbarWidget : Control
         if (changed) Invalidate();
         if (_tip.Visible) _tip.SetText(_tipText, this);
 
-        static (string, int?) Key(PanelItem i) => (i.Label, i.Value is float f ? (int)Math.Round(f) : null);
+        static (string, string, int?, Color) Key(PanelItem i) => (i.Label, i.ValueText, i.Value is float f ? (int)Math.Round(f) : null, i.RingColor);
+    }
+
+    public bool RingShowsNumber
+    {
+        get => _ringShowsNumber;
+        set { _ringShowsNumber = value; Invalidate(); }
     }
 
     /// <summary>Re-reads the taskbar layout and moves the widget. Returns false if it can't be placed.</summary>
@@ -95,7 +104,7 @@ internal sealed class TaskbarWidget : Control
 
         int h = tb.Height;
         int n = Math.Max(1, _items.Count);
-        int w = PadX(h) * 2 + n * _colWidth + (n - 1) * ColGap(h);
+        int w = PadX(h) * 2 + n * _ring + (n - 1) * RingGap(h);
         int screenX = tr.Left - w - Math.Max(2, h / 12);
         if (screenX <= tb.Left + tb.Width / 3) return false; // not enough room
 
@@ -110,28 +119,32 @@ internal sealed class TaskbarWidget : Control
         return true;
     }
 
-    private static int PadX(int h) => Math.Max(3, h / 10);
-    private static int ColGap(int h) => Math.Max(4, h / 6);
+    private static int PadX(int h) => Math.Max(2, h / 16);
+    private static int PadY(int h) => Math.Max(2, h / 12);
+    private static int RingGap(int h) => Math.Max(3, h / 10);
 
     private void ApplyFont(int taskbarHeight)
     {
         _lastHeight = taskbarHeight;
-        float px = Math.Max(9f, taskbarHeight * 0.29f); // ~14px on a 48px Windows 11 taskbar
+        _ring = taskbarHeight - PadY(taskbarHeight) * 2; // ~40px on a 48px Windows 11 taskbar
 
-        var oldValue = Font;
-        Font = new Font("Segoe UI", px, FontStyle.Bold, GraphicsUnit.Pixel);
-        if (!ReferenceEquals(oldValue, Control.DefaultFont)) oldValue.Dispose();
-        _labelFont?.Dispose();
-        _labelFont = new Font("Segoe UI", px * 0.92f, FontStyle.Regular, GraphicsUnit.Pixel);
-
-        // Fixed column width so the panel doesn't jitter as numbers change.
-        using var bmp = new Bitmap(1, 1);
-        using var g = Graphics.FromImage(bmp);
-        var fmt = StringFormat.GenericTypographic;
-        float widest = g.MeasureString("100%", Font, 999, fmt).Width;
-        foreach (var label in new[] { "CPU", "GPU", "RAM" })
-            widest = Math.Max(widest, g.MeasureString(label, _labelFont, 999, fmt).Width);
-        _colWidth = (int)Math.Ceiling(widest) + 1;
+        // One text size for every ring: the largest at which the widest text still fits inside.
+        using var family = new FontFamily("Segoe UI");
+        using var path = new GraphicsPath();
+        float px = _ring * 0.45f;
+        while (px > 6)
+        {
+            float widest = 0;
+            foreach (var t in new[] { "CPU", "GPU", "RAM", "TEMP", "100%", "100°" })
+            {
+                path.Reset();
+                path.AddString(t, family, (int)FontStyle.Bold, px, PointF.Empty, StringFormat.GenericTypographic);
+                widest = Math.Max(widest, path.GetBounds().Width);
+            }
+            if (widest <= _ring * 0.80f) break;
+            px -= 0.5f;
+        }
+        _textPx = px;
     }
 
     /// <returns>true if the theme changed.</returns>
@@ -193,46 +206,49 @@ internal sealed class TaskbarWidget : Control
     {
         var g = e.Graphics;
         g.Clear(_key);
-        if (_labelFont is null) return;
+        if (_ring <= 0) return;
         g.SmoothingMode = SmoothingMode.AntiAlias;
-        g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
 
         Color text = _lightTheme ? Color.FromArgb(20, 20, 20) : Color.FromArgb(245, 245, 245);
-        Color track = _lightTheme ? Color.FromArgb(205, 205, 205) : Color.FromArgb(75, 75, 75);
+        Color dim = _lightTheme ? Color.FromArgb(150, 150, 150) : Color.FromArgb(120, 120, 120);
+        Color track = _lightTheme ? Color.FromArgb(210, 210, 210) : Color.FromArgb(70, 70, 70);
 
         int h = Height;
-        int vpad = Math.Max(2, h / 8);
-        int barH = Math.Max(2, h / 24);
-        int rowH = (h - vpad * 2 - barH - 1) / 2;
-        int barY = vpad + rowH * 2 + 1;
+        float thick = Math.Max(3f, _ring * 0.15f);
 
-        using var center = new StringFormat(StringFormat.GenericTypographic)
-        {
-            Alignment = StringAlignment.Center,
-            LineAlignment = StringAlignment.Center,
-        };
-
+        using var family = new FontFamily("Segoe UI");
         for (int i = 0; i < _items.Count; i++)
         {
             var item = _items[i];
-            int x = PadX(h) + i * (_colWidth + ColGap(h));
-            bool hot = item.Value >= 90;
+            var box = new RectangleF(PadX(h) + i * (_ring + RingGap(h)), PadY(h), _ring, _ring);
+            var arc = RectangleF.Inflate(box, -thick / 2, -thick / 2);
 
-            using (var b = new SolidBrush(item.Accent))
-                g.DrawString(item.Label, _labelFont, b, new RectangleF(x, vpad, _colWidth, rowH), center);
-
-            string v = item.Value is float f ? $"{(int)Math.Round(f)}%" : "--";
-            using (var b = new SolidBrush(hot ? IconRenderer.Hot : text))
-                g.DrawString(v, Font, b, new RectangleF(x, vpad + rowH, _colWidth, rowH), center);
-
-            // Thin usage bar under the column.
-            using (var b = new SolidBrush(track)) g.FillRectangle(b, x, barY, _colWidth, barH);
-            if (item.Value is float val && val > 0)
+            // Track, then the filled part clockwise from 12 o'clock.
+            using (var p = new Pen(track, thick)) g.DrawEllipse(p, arc);
+            if (item.Value is float v && v > 0)
             {
-                int fill = (int)Math.Round(_colWidth * Math.Min(val, 100) / 100f);
-                using var b = new SolidBrush(hot ? IconRenderer.Hot : item.Accent);
-                g.FillRectangle(b, x, barY, fill, barH);
+                float sweep = 360f * Math.Min(v, 100f) / 100f;
+                using var p = new Pen(item.RingColor, thick);
+                if (sweep >= 360f) g.DrawEllipse(p, arc);
+                else
+                {
+                    p.StartCap = p.EndCap = LineCap.Round;
+                    g.DrawArc(p, arc, -90f, Math.Max(sweep, 1f));
+                }
             }
+
+            // Label (or number) centred on its actual glyph bounds.
+            string centre = _ringShowsNumber ? item.ValueText : item.Label;
+            using var path = new GraphicsPath();
+            path.AddString(centre, family, (int)FontStyle.Bold, _textPx, PointF.Empty, StringFormat.GenericTypographic);
+            RectangleF tb = path.GetBounds();
+            using (var m = new Matrix())
+            {
+                m.Translate(box.X + (box.Width - tb.Width) / 2f - tb.X, box.Y + (box.Height - tb.Height) / 2f - tb.Y);
+                path.Transform(m);
+            }
+            using var brush = new SolidBrush(item.Value is null ? dim : text);
+            g.FillPath(brush, path);
         }
     }
 
@@ -303,7 +319,6 @@ internal sealed class TaskbarWidget : Control
         {
             RestoreWin10TaskButtons();
             _tip.Dispose();
-            _labelFont?.Dispose();
         }
         base.Dispose(disposing);
     }

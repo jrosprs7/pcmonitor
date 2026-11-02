@@ -8,6 +8,8 @@ internal sealed class TrayContext : ApplicationContext
     public static readonly Color CpuAccent = Color.FromArgb(30, 120, 220);  // blue
     public static readonly Color GpuAccent = Color.FromArgb(40, 170, 80);   // green
     public static readonly Color RamAccent = Color.FromArgb(150, 90, 210);  // purple (like Task Manager)
+    public static readonly Color TempAccent = Color.FromArgb(225, 85, 150); // pink
+    // (Accents only identify tray icons. Fills and rings use the green→red level colors in Levels.cs.)
     private static readonly int[] Intervals = { 500, 1000, 2000, 5000 };
     private static readonly TimeSpan WidgetRetry = TimeSpan.FromSeconds(5);
 
@@ -17,12 +19,26 @@ internal sealed class TrayContext : ApplicationContext
         new(Metrics.Cpu, "CPU", CpuAccent),
         new(Metrics.Gpu, "GPU", GpuAccent),
         new(Metrics.Ram, "RAM", RamAccent),
+        new(Metrics.Temp, "TEMP", TempAccent),
     };
 
     private readonly record struct Sample(
         float? Cpu, float? Gpu, string? Engine, float? GpuTemp, float? Ram, double RamUsedGB, double RamTotalGB)
     {
-        public float? Value(Metrics m) => m switch { Metrics.Cpu => Cpu, Metrics.Gpu => Gpu, _ => Ram };
+        /// <summary>0-100 for usage; °C for temperature (so a full ring/icon = 100 °C).</summary>
+        public float? Value(Metrics m) => m switch
+        {
+            Metrics.Cpu => Cpu,
+            Metrics.Gpu => Gpu,
+            Metrics.Ram => Ram,
+            _ => GpuTemp,
+        };
+
+        public string Text(Metrics m) => Value(m) is float v
+            ? (m == Metrics.Temp ? $"{Math.Round(v)}°" : $"{Math.Round(v)}%")
+            : "--";
+
+        public Color Level(Metrics m) => Value(m) is float v ? Levels.For(m, v) : Levels.Green;
     }
 
     private readonly Dictionary<Metrics, NotifyIcon> _icons = new();     // one per metric
@@ -38,6 +54,7 @@ internal sealed class TrayContext : ApplicationContext
     private readonly ToolStripMenuItem _statusItem;
     private readonly ToolStripMenuItem _displayMenu;
     private readonly ToolStripMenuItem _showMenu;
+    private readonly ToolStripMenuItem _ringNumberItem;
     private readonly Control _ui; // marshals sampler results onto the UI thread
 
     private readonly Thread _sampler;
@@ -71,6 +88,13 @@ internal sealed class TrayContext : ApplicationContext
             _showMenu.DropDownItems.Add(item);
         }
 
+        _ringNumberItem = new ToolStripMenuItem("Numbers inside rings") { Checked = Settings.RingShowsNumber, CheckOnClick = true };
+        _ringNumberItem.CheckedChanged += (_, _) =>
+        {
+            Settings.RingShowsNumber = _ringNumberItem.Checked;
+            if (_widget is not null) _widget.RingShowsNumber = _ringNumberItem.Checked;
+        };
+
         var intervalMenu = new ToolStripMenuItem("Update every");
         foreach (int ms in Intervals)
         {
@@ -92,6 +116,7 @@ internal sealed class TrayContext : ApplicationContext
             new ToolStripSeparator(),
             _displayMenu,
             _showMenu,
+            _ringNumberItem,
             intervalMenu,
             startupItem,
             new ToolStripMenuItem("Open Task Manager", null, (_, _) => OpenTaskManager()),
@@ -102,8 +127,8 @@ internal sealed class TrayContext : ApplicationContext
         // ----- Tray icons (created hidden; ApplyMode decides which to show) -----
         // Created right-to-left so they usually appear as CPU, GPU, RAM from left to right.
         foreach (var m in AllMetrics.Reverse())
-            _icons[m.Flag] = CreateIcon(IconRenderer.Render(null, m.Accent), $"{m.Label}: --");
-        _comboIcon = CreateIcon(IconRenderer.RenderCombined(ShownMetrics().Select(m => ((float?)null, m.Accent)).ToList()), "PC Monitor");
+            _icons[m.Flag] = CreateIcon(IconRenderer.Render(null, Levels.Green, m.Accent), $"{m.Label}: --");
+        _comboIcon = CreateIcon(IconRenderer.RenderCombined(ShownMetrics().Select(m => ((float?)null, Levels.Green, m.Accent)).ToList()), "PC Monitor");
         ApplyMode();
 
         // ----- Sampling thread -----
@@ -170,7 +195,11 @@ internal sealed class TrayContext : ApplicationContext
             {
                 _widget = TaskbarWidget.TryCreate(_menu, OpenTaskManager);
                 if (_widget is null) _nextWidgetAttempt = DateTime.UtcNow + WidgetRetry;
-                else _widget.SetValues(PanelItems(_last), BuildTooltip(_last));
+                else
+                {
+                    _widget.RingShowsNumber = _ringNumberItem.Checked;
+                    _widget.SetValues(PanelItems(_last), BuildTooltip(_last));
+                }
             }
         }
         else if (_widget is not null)
@@ -238,25 +267,26 @@ internal sealed class TrayContext : ApplicationContext
         foreach (var m in AllMetrics)
         {
             var icon = _icons[m.Flag];
-            if (icon.Visible && Changed(_iconKeys.GetValueOrDefault(m.Flag), Pct(s.Value(m.Flag)), out var key))
+            if (icon.Visible && Changed(_iconKeys.GetValueOrDefault(m.Flag), s.Text(m.Flag), out var key))
             {
                 _iconKeys[m.Flag] = key;
-                SetIcon(icon, IconRenderer.Render(s.Value(m.Flag), m.Accent));
+                SetIcon(icon, IconRenderer.Render(s.Value(m.Flag), s.Level(m.Flag), m.Accent));
             }
             icon.Text = Truncate(m.Flag switch
             {
                 Metrics.Cpu => CpuLine(s),
                 Metrics.Gpu => GpuLines(s),
-                _ => RamLine(s),
+                Metrics.Ram => RamLine(s),
+                _ => s.GpuTemp is float gt ? $"GPU temp: {Math.Round(gt)} °C" : "GPU temp: unavailable",
             });
         }
 
         var shown = ShownMetrics().ToList();
-        string comboNow = string.Join("|", shown.Select(m => m.Label + Pct(s.Value(m.Flag))));
+        string comboNow = string.Join("|", shown.Select(m => m.Label + s.Text(m.Flag)));
         if (_comboIcon.Visible && Changed(_comboKey, comboNow, out var ck))
         {
             _comboKey = ck;
-            SetIcon(_comboIcon, IconRenderer.RenderCombined(shown.Select(m => (s.Value(m.Flag), m.Accent)).ToList()));
+            SetIcon(_comboIcon, IconRenderer.RenderCombined(shown.Select(m => (s.Value(m.Flag), s.Level(m.Flag), m.Accent)).ToList()));
         }
         _comboIcon.Text = Truncate(tooltip);
 
@@ -268,7 +298,7 @@ internal sealed class TrayContext : ApplicationContext
     }
 
     private List<PanelItem> PanelItems(Sample s) =>
-        ShownMetrics().Select(m => new PanelItem(m.Label, s.Value(m.Flag), m.Accent)).ToList();
+        ShownMetrics().Select(m => new PanelItem(m.Label, s.Value(m.Flag), s.Text(m.Flag), s.Level(m.Flag))).ToList();
 
     private static string Pct(float? v) => v is float f ? $"{Math.Round(f)}%" : "--";
 

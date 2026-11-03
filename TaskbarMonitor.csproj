@@ -16,5 +16,6 @@
     <Using Include="System.Drawing" />
     <Using Include="System.Windows.Forms" />
     <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="8.0.1" />
+    <PackageReference Include="System.Management" Version="8.0.0" />
   </ItemGroup>
 </Project>

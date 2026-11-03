@@ -23,22 +23,25 @@ internal sealed class TrayContext : ApplicationContext
     };
 
     private readonly record struct Sample(
-        float? Cpu, float? Gpu, string? Engine, float? GpuTemp, float? Ram, double RamUsedGB, double RamTotalGB)
+        float? Cpu, float? Gpu, string? Engine, float? GpuTemp, float? Ram, double RamUsedGB, double RamTotalGB,
+        float? CpuTemp, string? CpuTempSource, bool TempShowsGpu = false)
     {
+        public float? Temp => TempShowsGpu ? GpuTemp : CpuTemp;
+
         /// <summary>0-100 for usage; °C for temperature (so a full ring/icon = 100 °C).</summary>
         public float? Value(Metrics m) => m switch
         {
             Metrics.Cpu => Cpu,
             Metrics.Gpu => Gpu,
             Metrics.Ram => Ram,
-            _ => GpuTemp,
+            _ => Temp,
         };
 
         public string Text(Metrics m) => Value(m) is float v
             ? (m == Metrics.Temp ? $"{Math.Round(v)}°" : $"{Math.Round(v)}%")
             : "--";
 
-        public Color Level(Metrics m) => Value(m) is float v ? Levels.For(m, v) : Levels.Green;
+        public Color Level(Metrics m) => Value(m) is float v ? Levels.For(m, v, cpuTemp: !TempShowsGpu) : Levels.Green;
     }
 
     private readonly Dictionary<Metrics, NotifyIcon> _icons = new();     // one per metric
@@ -55,6 +58,7 @@ internal sealed class TrayContext : ApplicationContext
     private readonly ToolStripMenuItem _displayMenu;
     private readonly ToolStripMenuItem _showMenu;
     private readonly ToolStripMenuItem _ringNumberItem;
+    private bool _tempShowsGpu;
     private int _ringSize;
     private readonly Control _ui; // marshals sampler results onto the UI thread
 
@@ -96,6 +100,21 @@ internal sealed class TrayContext : ApplicationContext
             if (_widget is not null) _widget.RingShowsNumber = _ringNumberItem.Checked;
         };
 
+        _tempShowsGpu = Settings.TempShowsGpu;
+        var tempMenu = new ToolStripMenuItem("Temperature");
+        foreach (var (text, gpu) in new[] { ("CPU temperature", false), ("GPU temperature", true) })
+        {
+            var item = new ToolStripMenuItem(text) { Tag = gpu, Checked = gpu == _tempShowsGpu };
+            item.Click += (_, _) =>
+            {
+                _tempShowsGpu = gpu;
+                Settings.TempShowsGpu = gpu;
+                foreach (ToolStripMenuItem i in tempMenu.DropDownItems) i.Checked = (bool)i.Tag! == gpu;
+                Refresh();
+            };
+            tempMenu.DropDownItems.Add(item);
+        }
+
         _ringSize = Settings.RingSizePercent;
         var sizeMenu = new ToolStripMenuItem("Size");
         foreach (int pct in new[] { 50, 64, 80, 100 })
@@ -132,6 +151,7 @@ internal sealed class TrayContext : ApplicationContext
             new ToolStripSeparator(),
             _displayMenu,
             _showMenu,
+            tempMenu,
             _ringNumberItem,
             sizeMenu,
             intervalMenu,
@@ -253,6 +273,7 @@ internal sealed class TrayContext : ApplicationContext
         using var cpu = new CpuMonitor();
         var gpu = new GpuMonitor();
         using var temp = new GpuTemperature();
+        var cpuTemp = new CpuTemperature();
         _wake.WaitOne(500); // let the first counter sample settle
 
         while (!_stopping)
@@ -261,7 +282,9 @@ internal sealed class TrayContext : ApplicationContext
             float? g = gpu.Read();
             float? t = temp.Read(gpu.BusiestAdapterLuid);
             var ram = RamMonitor.Read();
-            var sample = new Sample(c, g, gpu.BusiestEngine, t, ram?.Percent, ram?.UsedGB ?? 0, ram?.TotalGB ?? 0);
+            float? ct = cpuTemp.Read();
+            var sample = new Sample(c, g, gpu.BusiestEngine, t, ram?.Percent, ram?.UsedGB ?? 0, ram?.TotalGB ?? 0,
+                                    ct, cpuTemp.Source);
 
             try { _ui.BeginInvoke(() => OnSample(sample)); }
             catch (InvalidOperationException) { break; } // UI is shutting down
@@ -273,11 +296,12 @@ internal sealed class TrayContext : ApplicationContext
     private void OnSample(Sample s)
     {
         if (_stopping) return;
+        s = s with { TempShowsGpu = _tempShowsGpu };
         _last = s;
         ApplyMode();
 
-        string tempText = s.GpuTemp is float t ? $" ({Math.Round(t)} °C)" : "";
-        _statusItem.Text = $"CPU {Pct(s.Cpu)}   ·   GPU {Pct(s.Gpu)}{tempText}   ·   RAM {Pct(s.Ram)}";
+        static string Deg(float? t) => t is float v ? $" ({Math.Round(v)} °C)" : "";
+        _statusItem.Text = $"CPU {Pct(s.Cpu)}{Deg(s.CpuTemp)}   ·   GPU {Pct(s.Gpu)}{Deg(s.GpuTemp)}   ·   RAM {Pct(s.Ram)}";
 
         string tooltip = BuildTooltip(s);
         _widget?.SetValues(PanelItems(s), tooltip);
@@ -292,10 +316,10 @@ internal sealed class TrayContext : ApplicationContext
             }
             icon.Text = Truncate(m.Flag switch
             {
-                Metrics.Cpu => CpuLine(s),
+                Metrics.Cpu => CpuLines(s),
                 Metrics.Gpu => GpuLines(s),
                 Metrics.Ram => RamLine(s),
-                _ => s.GpuTemp is float gt ? $"GPU temp: {Math.Round(gt)} °C" : "GPU temp: unavailable",
+                _ => s.TempShowsGpu ? GpuTempLine(s) : CpuTempLine(s),
             });
         }
 
@@ -321,16 +345,25 @@ internal sealed class TrayContext : ApplicationContext
     private static string Pct(float? v) => v is float f ? $"{Math.Round(f)}%" : "--";
 
     // The tooltip always shows every metric, whatever is selected under "Show".
-    private static string BuildTooltip(Sample s) => $"{CpuLine(s)}\n{GpuLines(s)}\n{RamLine(s)}";
+    private static string BuildTooltip(Sample s) => $"{CpuLines(s)}\n{GpuLines(s)}\n{RamLine(s)}";
 
     private static string CpuLine(Sample s) => s.Cpu is null ? "CPU: unavailable" : $"CPU: {Pct(s.Cpu)}";
+
+    private static string CpuLines(Sample s) => $"{CpuLine(s)}\n{CpuTempLine(s)}";
+
+    private static string CpuTempLine(Sample s) => s.CpuTemp is float t
+        ? $"CPU temp: {Math.Round(t)} °C" + (s.CpuTempSource == "estimate" ? " (estimate)" : "")
+        : "CPU temp: unavailable";
+
+    private static string GpuTempLine(Sample s) =>
+        s.GpuTemp is float t ? $"GPU temp: {Math.Round(t)} °C" : "GPU temp: unavailable";
 
     private static string GpuLines(Sample s)
     {
         string text = s.Gpu is null
             ? "GPU: unavailable"
             : $"GPU: {Pct(s.Gpu)}" + (s.Engine is null ? "" : $" ({s.Engine})");
-        if (s.GpuTemp is float t) text += $"\nGPU temp: {Math.Round(t)} °C";
+        text += "\n" + GpuTempLine(s);
         return text;
     }
 

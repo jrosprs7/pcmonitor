@@ -322,3 +322,130 @@ internal static class RamMonitor
         return ((float)(100.0 * used / s.ullTotalPhys), used / GB, s.ullTotalPhys / GB);
     }
 }
+
+/// <summary>
+/// CPU temperature. Windows has no built-in, no-admin API for the real CPU sensor (tools like HWiNFO
+/// load a kernel driver), so this tries, in order:
+///   1. LibreHardwareMonitor / OpenHardwareMonitor, if running: they publish real sensor readings over WMI.
+///   2. ACPI thermal zones ("Thermal Zone Information" performance counters): no admin needed. Usually a
+///      sensible value on laptops, but on many desktops it's missing or a fixed placeholder, so it's
+///      labelled as an estimate.
+/// </summary>
+internal sealed class CpuTemperature
+{
+    private static readonly TimeSpan ProbeInterval = TimeSpan.FromSeconds(30);
+    private static readonly (string Namespace, string Name)[] Monitors =
+    {
+        (@"root\LibreHardwareMonitor", "LibreHardwareMonitor"),
+        (@"root\OpenHardwareMonitor", "OpenHardwareMonitor"),
+    };
+    // Preferred sensor names (Intel package, AMD Tctl/Tdie), checked in this order.
+    private static readonly string[] Preferred = { "CPU Package", "Core (Tctl/Tdie)", "Core (Tdie)", "Core (Tctl)", "Package" };
+
+    private (string Namespace, string Name)? _monitor;
+    private DateTime _nextProbe = DateTime.MinValue;
+    private PerformanceCounterCategory? _zones;
+    private bool _zonesChecked;
+
+    /// <summary>Where the last reading came from, e.g. "LibreHardwareMonitor" or "estimate".</summary>
+    public string? Source { get; private set; }
+
+    public float? Read()
+    {
+        if (_monitor is null && DateTime.UtcNow >= _nextProbe)
+        {
+            _nextProbe = DateTime.UtcNow + ProbeInterval;
+            _monitor = null;
+            foreach (var m in Monitors)
+                if (ReadWmi(m.Namespace) is not null) { _monitor = m; break; }
+        }
+
+        if (_monitor is { } mon)
+        {
+            if (ReadWmi(mon.Namespace) is float t)
+            {
+                Source = mon.Name;
+                return t;
+            }
+            _monitor = null; // the monitor app was closed; probe again later
+        }
+
+        if (ReadThermalZone() is float z)
+        {
+            Source = "estimate";
+            return z;
+        }
+
+        Source = null;
+        return null;
+    }
+
+    private static float? ReadWmi(string ns)
+    {
+        try
+        {
+            using var searcher = new System.Management.ManagementObjectSearcher(ns,
+                "SELECT Name, Value, Identifier FROM Sensor WHERE SensorType='Temperature'");
+            var cpu = new List<(string Name, float Value)>();
+            foreach (System.Management.ManagementBaseObject o in searcher.Get())
+            {
+                using (o)
+                {
+                    string id = o["Identifier"] as string ?? "";
+                    string name = o["Name"] as string ?? "";
+                    if (!id.Contains("cpu", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (name.Contains("Distance", StringComparison.OrdinalIgnoreCase)) continue; // "distance to TjMax", not a temperature
+                    float v = Convert.ToSingle(o["Value"]);
+                    if (v > 0 && v < 150) cpu.Add((name, v));
+                }
+            }
+            if (cpu.Count == 0) return null;
+            foreach (var p in Preferred)
+                foreach (var s in cpu)
+                    if (s.Name.Equals(p, StringComparison.OrdinalIgnoreCase)) return s.Value;
+            return cpu.Max(s => s.Value);
+        }
+        catch { return null; } // namespace missing (monitor not running) or access denied
+    }
+
+    private float? ReadThermalZone()
+    {
+        if (!_zonesChecked)
+        {
+            _zonesChecked = true;
+            try
+            {
+                if (PerformanceCounterCategory.Exists("Thermal Zone Information"))
+                    _zones = new PerformanceCounterCategory("Thermal Zone Information");
+            }
+            catch { }
+        }
+        if (_zones is null) return null;
+
+        try
+        {
+            var data = _zones.ReadCategory();
+            bool precise = data.Contains("High Precision Temperature"); // tenths of a kelvin (Windows 10+)
+            var samples = data[precise ? "High Precision Temperature" : "Temperature"];
+            if (samples is null) return null;
+
+            float? best = null;
+            bool bestIsCpu = false;
+            foreach (InstanceData d in samples.Values)
+            {
+                float kelvin = d.RawValue / (precise ? 10f : 1f);
+                float c = kelvin - 273.15f;
+                if (c <= 0 || c >= 125) continue;
+                bool isCpu = d.InstanceName.Contains("CPU", StringComparison.OrdinalIgnoreCase);
+                // Prefer a zone named after the CPU; otherwise take the hottest zone.
+                if (best is null || (isCpu && !bestIsCpu) || (isCpu == bestIsCpu && c > best))
+                {
+                    best = c;
+                    bestIsCpu = isCpu;
+                }
+            }
+            return best;
+        }
+        catch { return null; }
+    }
+}

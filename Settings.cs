@@ -16,7 +16,7 @@ internal enum Metrics
     Cpu = 1,
     Gpu = 2,
     Ram = 4,
-    Temp = 8, // GPU temperature
+    Temp = 8, // CPU or GPU temperature (see Settings.TempShowsGpu)
     All = Cpu | Gpu | Ram | Temp,
 }
 
@@ -55,6 +55,13 @@ internal static class Settings
     {
         get => Math.Clamp(Get("RingSize", 64), 50, 100);
         set => Set("RingSize", value);
+    }
+
+    /// <summary>What the TEMP ring/icon shows: CPU temperature (default) or GPU temperature.</summary>
+    public static bool TempShowsGpu
+    {
+        get => Get("TempSource", 0) == 1;
+        set => Set("TempSource", value ? 1 : 0);
     }
 
     /// <summary>Taskbar panel: show the number (23%) instead of the label (CPU) inside each ring.</summary>

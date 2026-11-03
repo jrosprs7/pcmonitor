@@ -9,10 +9,13 @@ internal static class Levels
     public static readonly Color Red = Color.FromArgb(232, 56, 56);
 
     // Usage %:        green < 60 <= yellow < 80 <= orange < 95 <= red
+    // CPU temp (°C):  green < 70 <= yellow < 80 <= orange < 90 <= red  (CPUs commonly run to 90-100 °C under load)
     // GPU temp (°C):  green < 65 <= yellow < 80 <= orange < 88 <= red  (most GPUs start throttling in the 80s)
-    public static Color For(Metrics metric, float value)
+    public static Color For(Metrics metric, float value, bool cpuTemp = true)
     {
-        var (yellow, orange, red) = metric == Metrics.Temp ? (65f, 80f, 88f) : (60f, 80f, 95f);
+        var (yellow, orange, red) = metric != Metrics.Temp ? (60f, 80f, 95f)
+                                  : cpuTemp ? (70f, 80f, 90f)
+                                  : (65f, 80f, 88f);
         return value >= red ? Red : value >= orange ? Orange : value >= yellow ? Yellow : Green;
     }
 }

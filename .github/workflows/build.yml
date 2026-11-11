@@ -22,6 +22,22 @@ jobs:
         shell: cmd
         run: build.cmd
 
+      - name: CPU accuracy check (app vs typeperf, with load in the middle)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force screenshots | Out-Null
+          $n = [Environment]::ProcessorCount
+          $tp = Start-Process typeperf -ArgumentList '"\Processor Information(_Total)\% Processor Utility" "\Processor(_Total)\% Processor Time" -si 1 -sc 22 -f CSV -o screenshots\typeperf.csv -y' -PassThru -NoNewWindow
+          $d = Start-Process dist\standalone\TaskbarMonitor.exe -ArgumentList '--diag', 'screenshots\diag.csv', '22' -PassThru
+          Start-Sleep -Seconds 7
+          $busy = [math]::Max(1, [int]($n / 2))
+          $jobs = 1..$busy | ForEach-Object { Start-Job { $end = (Get-Date).AddSeconds(9); while ((Get-Date) -lt $end) { } } }
+          Wait-Process -Id $d.Id, $tp.Id -Timeout 90
+          $jobs | Stop-Job -PassThru | Remove-Job
+          "cores=$n busy_threads=$busy" | Out-File screenshots\info.txt
+          Get-Content screenshots\diag.csv
+          Get-Content screenshots\typeperf.csv
+
       - name: Smoke test + taskbar screenshots
         shell: pwsh
         run: |
@@ -81,7 +97,7 @@ jobs:
           Copy-Item screenshots $tmp -Recurse
           git checkout --orphan ci-screenshots
           git rm -rf --quiet .
-          Copy-Item "$tmp\*.png" .
-          git add *.png
+          Copy-Item "$tmp\*" .
+          git add *.png *.csv *.txt
           git commit -m "Screenshots for $env:GITHUB_SHA"
           git push -f origin ci-screenshots

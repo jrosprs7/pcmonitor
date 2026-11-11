@@ -25,7 +25,7 @@ internal static class Diagnostics
         using var time = new PerformanceCounter("Processor", "% Processor Time", "_Total", true);
 
         w.WriteLine($"# cores={Environment.ProcessorCount} utilityCounterType={util.CounterType} os={Environment.OSVersion}");
-        w.WriteLine("t,app,utility_raw,utility_raw_value,utility_base_value,processor_time,system_times");
+        w.WriteLine("t,app,processor_utility,utility_raw_value,utility_base_value,processor_time,system_times");
 
         util.NextValue();
         time.NextValue();

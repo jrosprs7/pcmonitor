@@ -10,9 +10,11 @@ internal sealed class CpuMonitor : IDisposable
 
     public CpuMonitor()
     {
-        // "% Processor Utility" is what Task Manager uses on Windows 8+ (accounts for turbo/frequency).
-        // Fall back to the classic "% Processor Time" if it is not available.
-        _counter = TryCreate("Processor Information", "% Processor Utility", "_Total")
+        // "% Processor Time" = share of time the CPU was busy. Current Task Manager uses this (Microsoft
+        // switched it in 2025). We used to read "% Processor Utility", which is scaled by clock speed: when
+        // the CPU boosts above its base clock it reads far higher than Task Manager and passes 100%.
+        // "Processor Information" covers every processor group (>64 threads); "Processor" is the fallback.
+        _counter = TryCreate("Processor Information", "% Processor Time", "_Total")
                 ?? TryCreate("Processor", "% Processor Time", "_Total");
         _counter?.NextValue(); // first read always returns 0; prime it
     }

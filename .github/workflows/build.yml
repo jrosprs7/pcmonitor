@@ -27,7 +27,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force screenshots | Out-Null
           $n = [Environment]::ProcessorCount
-          $tp = Start-Process typeperf -ArgumentList '"\Processor Information(_Total)\% Processor Utility" "\Processor(_Total)\% Processor Time" -si 1 -sc 22 -f CSV -o screenshots\typeperf.csv -y' -PassThru -NoNewWindow
+          $tp = Start-Process typeperf -ArgumentList '"\Processor Information(_Total)\% Processor Time" "\Processor Information(_Total)\% Processor Utility" -si 1 -sc 22 -f CSV -o screenshots\typeperf.csv -y' -PassThru -NoNewWindow
           $d = Start-Process dist\standalone\TaskbarMonitor.exe -ArgumentList '--diag', 'screenshots\diag.csv', '22' -PassThru
           Start-Sleep -Seconds 7
           $busy = [math]::Max(1, [int]($n / 2))

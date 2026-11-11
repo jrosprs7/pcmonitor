@@ -61,7 +61,7 @@ The exe isn't code-signed, so Windows SmartScreen may warn the first time you ru
 Install the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0), then run `build.cmd`.
 
 ## Files
-- `Monitors.cs` – CPU (`Processor Information\% Processor Utility`), CPU temperature (LibreHardwareMonitor WMI, else `Thermal Zone Information`), GPU (`GPU Engine\Utilization Percentage`), GPU temperature (`D3DKMTQueryAdapterInfo` adapter perf data) and RAM (`GlobalMemoryStatusEx`)
+- `Monitors.cs` – CPU (`Processor Information\% Processor Time`, same as current Task Manager), CPU temperature (LibreHardwareMonitor WMI, else `Thermal Zone Information`), GPU (`GPU Engine\Utilization Percentage`), GPU temperature (`D3DKMTQueryAdapterInfo` adapter perf data) and RAM (`GlobalMemoryStatusEx`)
 - `TaskbarWidget.cs` – the taskbar panel (ring gauges) and its hover tooltip
 - `IconRenderer.cs` – draws the numbers into tray icons
 - `Levels.cs` – green / yellow / orange / red thresholds

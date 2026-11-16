@@ -23,7 +23,7 @@ internal static class Program
             }
             catch (AbandonedMutexException) { /* the old copy exited without releasing it: we own it now */ }
         }
-        if (justUpdated) Updater.CleanUpAfterUpdate();
+        Updater.CleanUpAfterUpdate(); // removes TaskbarMonitor.exe.old left by an update, if any
 
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();

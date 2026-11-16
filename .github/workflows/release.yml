@@ -109,10 +109,14 @@ jobs:
             Start-Sleep -Seconds 10
             $ver = (Get-Item $exe).VersionInfo.FileVersion
           } until ($ver -like "$env:VERSION*" -or (Get-Date) -gt $deadline)
-          Start-Sleep -Seconds 10
+          # Give the new copy time to start and remove the old exe.
+          $cleanDeadline = (Get-Date).AddSeconds(90)
+          while ((Test-Path "$exe.old") -and (Get-Date) -lt $cleanDeadline) { Start-Sleep -Seconds 5 }
+          Get-Process TaskbarMonitor -ErrorAction SilentlyContinue | Format-Table Id, StartTime, Path -AutoSize | Out-String | Write-Host
           $running = Get-Process TaskbarMonitor -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
+          $leftover = Test-Path "$exe.old"
           Get-Process TaskbarMonitor -ErrorAction SilentlyContinue | Stop-Process -Force
           if ($ver -notlike "$env:VERSION*") { throw "Update test failed: exe is still version $ver" }
           if (-not $running) { throw "Update test failed: the updated app did not restart" }
-          if (Test-Path "$exe.old") { Write-Warning "Leftover $exe.old was not cleaned up" }
+          if ($leftover) { throw "Update test failed: $exe.old was not cleaned up" }
           Write-Host "Update test passed: $prev updated itself to $ver and restarted."

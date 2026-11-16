@@ -129,17 +129,22 @@ internal static class Updater
             Process.Start(new ProcessStartInfo(exe, "--updated") { UseShellExecute = false });
     }
 
-    /// <summary>Remove leftovers from a previous update (the old exe may stay locked for a moment).</summary>
+    /// <summary>
+    /// Remove leftovers from a previous update. Runs on every start-up. Right after an update the old exe
+    /// can stay locked for a while (the old process is still shutting down, or antivirus is scanning it),
+    /// so keep retrying for a few minutes.
+    /// </summary>
     public static void CleanUpAfterUpdate()
     {
         if (Environment.ProcessPath is not string exe) return;
+        if (!File.Exists(exe + ".old") && !File.Exists(exe + ".new")) return;
         Task.Run(async () =>
         {
-            for (int i = 0; i < 10 && (File.Exists(exe + ".old") || File.Exists(exe + ".new")); i++)
+            for (int i = 0; i < 90 && (File.Exists(exe + ".old") || File.Exists(exe + ".new")); i++)
             {
                 TryDelete(exe + ".old");
                 TryDelete(exe + ".new");
-                await Task.Delay(1000);
+                await Task.Delay(2000);
             }
         });
     }

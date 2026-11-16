@@ -205,7 +205,9 @@ internal sealed class TrayContext : ApplicationContext
         _updating = true;
         try
         {
+            Log.Write(manual ? "Checking for updates (manual)" : "Checking for updates");
             var result = await Task.Run(() => Updater.CheckAndInstallAsync());
+            Log.Write($"Update check: {result.Status}: {result.Message}");
             if (result.Status == Updater.Status.Updated)
             {
                 if (manual)
@@ -446,6 +448,7 @@ internal sealed class TrayContext : ApplicationContext
 
     protected override void ExitThreadCore()
     {
+        Log.Write("Shutting down");
         _stopping = true;
         _wake.Set();
 
@@ -463,5 +466,6 @@ internal sealed class TrayContext : ApplicationContext
         _menu.Dispose();
         _ui.Dispose();
         base.ExitThreadCore();
+        Log.Write("Shutdown complete");
     }
 }

@@ -86,8 +86,8 @@ jobs:
           gh release create $env:TAG release\TaskbarMonitor.exe release\TaskbarMonitor-small.exe `
             --target "${{ github.sha }}" --title "Taskbar Monitor $env:TAG" --notes $notes --generate-notes
 
-      # End-to-end check of auto-update: run the previous release and wait for it to replace itself
-      # with this one. Needs a public repo (the app checks GitHub without signing in).
+      # End-to-end check of auto-update: the previous release must replace itself with this one.
+      # Needs a public repo (the app checks GitHub without signing in).
       - name: Update test (previous release updates itself to this one)
         if: steps.ver.outputs.skip == 'false' && github.event.repository.private == false
         shell: pwsh
@@ -101,22 +101,4 @@ jobs:
           if (-not $prev) { Write-Host "No previous release to update from; skipping."; exit 0 }
           New-Item -ItemType Directory -Force updtest | Out-Null
           gh release download $prev --repo "${{ github.repository }}" --pattern TaskbarMonitor.exe --dir updtest
-          $exe = (Resolve-Path updtest\TaskbarMonitor.exe).Path
-          Write-Host "Starting $prev; it should update itself to $env:TAG within a few minutes."
-          Start-Process $exe | Out-Null
-          $deadline = (Get-Date).AddMinutes(5)
-          do {
-            Start-Sleep -Seconds 10
-            $ver = (Get-Item $exe).VersionInfo.FileVersion
-          } until ($ver -like "$env:VERSION*" -or (Get-Date) -gt $deadline)
-          # Give the new copy time to start and remove the old exe.
-          $cleanDeadline = (Get-Date).AddSeconds(90)
-          while ((Test-Path "$exe.old") -and (Get-Date) -lt $cleanDeadline) { Start-Sleep -Seconds 5 }
-          Get-Process TaskbarMonitor -ErrorAction SilentlyContinue | Format-Table Id, StartTime, Path -AutoSize | Out-String | Write-Host
-          $running = Get-Process TaskbarMonitor -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
-          $leftover = Test-Path "$exe.old"
-          Get-Process TaskbarMonitor -ErrorAction SilentlyContinue | Stop-Process -Force
-          if ($ver -notlike "$env:VERSION*") { throw "Update test failed: exe is still version $ver" }
-          if (-not $running) { throw "Update test failed: the updated app did not restart" }
-          if ($leftover) { throw "Update test failed: $exe.old was not cleaned up" }
-          Write-Host "Update test passed: $prev updated itself to $ver and restarted."
+          ./.github/update-test.ps1 -Exe updtest\TaskbarMonitor.exe -ExpectedVersion $env:VERSION

@@ -69,6 +69,22 @@ jobs:
           Stop-Process -Id $p.Id
           Write-Host "App ran without crashing."
 
+      # This commit's code, labelled as an old version, must update itself to the latest release.
+      # Tests the "old copy" side of updating without publishing anything. Needs a public repo.
+      - name: Update test (this code as v0.0.1 updates itself to the latest release)
+        if: github.event.repository.private == false
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $latest = (gh release view --repo "${{ github.repository }}" --json tagName --jq .tagName).TrimStart('v')
+          if (-not $latest) { Write-Host "No release yet; skipping."; exit 0 }
+          dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true `
+            -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none `
+            -p:Version=0.0.1 -p:UpdateAsset=TaskbarMonitor.exe -o updtest
+          if ($LASTEXITCODE) { throw "build failed" }
+          ./.github/update-test.ps1 -Exe updtest\TaskbarMonitor.exe -ExpectedVersion $latest
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:

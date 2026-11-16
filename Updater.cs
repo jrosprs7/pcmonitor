@@ -122,11 +122,21 @@ internal static class Updater
         }
     }
 
-    /// <summary>Start the freshly installed copy. The caller should exit right after.</summary>
+    /// <summary>
+    /// Start the freshly installed copy (it waits for this one to exit). The caller should exit right after.
+    /// As a safety net, this process ends itself if it is still running 8 seconds later.
+    /// </summary>
     public static void StartNewVersion()
     {
-        if (Environment.ProcessPath is string exe)
-            Process.Start(new ProcessStartInfo(exe, "--updated") { UseShellExecute = false });
+        if (Environment.ProcessPath is not string exe) return;
+        Log.Write("Starting the new version and exiting");
+        Process.Start(new ProcessStartInfo(exe, $"--updated {Environment.ProcessId}") { UseShellExecute = false })?.Dispose();
+        new Thread(() =>
+        {
+            Thread.Sleep(8000);
+            Log.Write("Still running 8 s after the update; forcing exit");
+            Process.GetCurrentProcess().Kill();
+        }) { IsBackground = true, Name = "UpdateExitGuard" }.Start();
     }
 
     /// <summary>

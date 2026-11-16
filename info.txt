@@ -1,0 +1,1 @@
+cores=4 busy_threads=2

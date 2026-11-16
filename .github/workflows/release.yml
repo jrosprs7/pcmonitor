@@ -1,32 +1,54 @@
 name: Release
 
-# Publish a version: push a tag like v1.2.0  (git tag v1.2.0 && git push origin v1.2.0)
-# Builds both exes on Windows, stamps them for self-update, and attaches them to a GitHub Release.
+# Publish a version: raise <Version> in TaskbarMonitor.csproj and push to main.
+# If no release exists for that version yet, this builds both exes on Windows, stamps them for
+# self-update, and publishes GitHub Release v<Version> (GitHub creates the tag).
 # Users always get the newest via .../releases/latest/download/TaskbarMonitor.exe
 on:
   push:
-    tags: ['v*']
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: windows-latest
-    env:
-      TAG: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v4
 
+      - name: Read version, skip if already released
+        id: ver
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $v = ([xml](Get-Content TaskbarMonitor.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+          if ($v -notmatch '^\d+\.\d+\.\d+$') { throw "Version in TaskbarMonitor.csproj must look like 1.2.3, got '$v'" }
+          gh release view "v$v" --repo "${{ github.repository }}" *> $null
+          $skip = ($LASTEXITCODE -eq 0)
+          $global:LASTEXITCODE = 0
+          if ($skip) { Write-Host "v$v is already released; nothing to do." } else { Write-Host "Releasing v$v" }
+          "version=$v" >> $env:GITHUB_OUTPUT
+          "skip=$($skip.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+
       - uses: actions/setup-dotnet@v4
+        if: steps.ver.outputs.skip == 'false'
         with:
           dotnet-version: '8.0.x'
 
       - name: Build
+        if: steps.ver.outputs.skip == 'false'
         shell: pwsh
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          if ($env:TAG -notmatch '^v(\d+\.\d+\.\d+)$') { throw "Tag must look like v1.2.3, got '$env:TAG'" }
-          $v = $Matches[1]
+          $v = $env:VERSION
           dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true `
             -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none `
             -p:Version=$v -p:UpdateAsset=TaskbarMonitor.exe -o out\standalone
@@ -39,6 +61,7 @@ jobs:
           Copy-Item out\small\TaskbarMonitor.exe release\TaskbarMonitor-small.exe
 
       - name: Smoke test
+        if: steps.ver.outputs.skip == 'false'
         shell: pwsh
         run: |
           $p = Start-Process release\TaskbarMonitor.exe -PassThru
@@ -47,9 +70,11 @@ jobs:
           Stop-Process -Id $p.Id
 
       - name: Publish GitHub Release
+        if: steps.ver.outputs.skip == 'false'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: v${{ steps.ver.outputs.version }}
         run: |
           $notes = @"
           **Download:** [TaskbarMonitor.exe](https://github.com/${{ github.repository }}/releases/download/$env:TAG/TaskbarMonitor.exe) (runs on any Windows 10/11 PC, nothing to install).
@@ -59,4 +84,4 @@ jobs:
           Already installed? It updates itself automatically within a few hours, or right-click it → Updates → Check for updates now.
           "@
           gh release create $env:TAG release\TaskbarMonitor.exe release\TaskbarMonitor-small.exe `
-            --title "Taskbar Monitor $env:TAG" --notes $notes --generate-notes
+            --target "${{ github.sha }}" --title "Taskbar Monitor $env:TAG" --notes $notes --generate-notes

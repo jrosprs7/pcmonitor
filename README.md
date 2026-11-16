@@ -50,11 +50,7 @@ The app checks for a new release a minute after it starts and then every 6 hours
 Keep the exe in a folder you own (e.g. `%LOCALAPPDATA%\TaskbarMonitor\`) so it can update itself; it can't replace itself inside `C:\Program Files`.
 
 ### Publishing a new version (maintainers)
-```bash
-git tag v1.2.0
-git push origin v1.2.0
-```
-The **Release** workflow builds both exes on Windows, stamps them with the version, and publishes the GitHub Release. Installed copies pick it up automatically. Builds from the **Build** workflow (Actions → Artifacts) and local builds are development builds and never update themselves.
+Raise `<Version>` in `TaskbarMonitor.csproj` (e.g. `1.0.0` → `1.0.1`) and push to `main`. The **Release** workflow sees there's no release for that version yet, builds both exes on Windows, stamps them with the version, and publishes GitHub Release `v1.0.1`. Installed copies pick it up automatically. Pushes that don't change the version publish nothing. Builds from the **Build** workflow (Actions → Artifacts) and local builds are development builds and never update themselves.
 
 ## Run
 

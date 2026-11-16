@@ -71,6 +71,12 @@ internal static class Settings
         set => Set("RingShowsNumber", value ? 1 : 0);
     }
 
+    public static bool AutoUpdate
+    {
+        get => Get("AutoUpdate", 1) != 0;
+        set => Set("AutoUpdate", value ? 1 : 0);
+    }
+
     public static bool StartWithWindows
     {
         get

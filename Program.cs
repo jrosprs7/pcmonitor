@@ -11,9 +11,19 @@ internal static class Program
             return;
         }
 
-        // Only allow one copy to run at a time.
+        // Only allow one copy to run at a time. Right after an update, the new copy waits for the old one to exit.
+        bool justUpdated = args.Contains("--updated");
         using var mutex = new Mutex(true, @"Local\TaskbarMonitor.SingleInstance", out bool isFirst);
-        if (!isFirst) return;
+        if (!isFirst)
+        {
+            if (!justUpdated) return;
+            try
+            {
+                if (!mutex.WaitOne(TimeSpan.FromSeconds(30))) return;
+            }
+            catch (AbandonedMutexException) { /* the old copy exited without releasing it: we own it now */ }
+        }
+        if (justUpdated) Updater.CleanUpAfterUpdate();
 
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();

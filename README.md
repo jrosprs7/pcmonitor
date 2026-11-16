@@ -39,7 +39,22 @@ If neither is available, the TEMP ring shows `--`. You can switch it to GPU temp
 Works with NVIDIA, AMD and Intel GPUs on Windows 10 (1709+) and Windows 11. It reads the same performance counters Task Manager uses, so the numbers should match it. No admin rights needed.
 
 ## Download
-Every push to `main` is built on a Windows machine by GitHub Actions, which also takes screenshots of the running app. Open the repo's **Actions** tab → the latest **Build** run → **Artifacts** to download the exe (or the screenshots).
+
+**[⬇ Download TaskbarMonitor.exe](https://github.com/jrosprs7/pcmonitor/releases/latest/download/TaskbarMonitor.exe)** — always the latest version. Runs on any Windows 10/11 PC; nothing to install.
+
+All versions and the smaller `TaskbarMonitor-small.exe` (needs the [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0)) are on the [Releases page](https://github.com/jrosprs7/pcmonitor/releases).
+
+### Automatic updates
+The app checks for a new release a minute after it starts and then every 6 hours. When one is out, it downloads it, checks it, swaps itself and restarts — no clicks needed. Right-click → **Updates** shows your version, has **Check for updates now**, and lets you turn **Update automatically** off.
+
+Keep the exe in a folder you own (e.g. `%LOCALAPPDATA%\TaskbarMonitor\`) so it can update itself; it can't replace itself inside `C:\Program Files`.
+
+### Publishing a new version (maintainers)
+```bash
+git tag v1.2.0
+git push origin v1.2.0
+```
+The **Release** workflow builds both exes on Windows, stamps them with the version, and publishes the GitHub Release. Installed copies pick it up automatically. Builds from the **Build** workflow (Actions → Artifacts) and local builds are development builds and never update themselves.
 
 ## Run
 
@@ -68,4 +83,6 @@ Install the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0), then
 - `Fonts.cs` – the compact font (Bahnschrift SemiBold Condensed, with fallbacks)
 - `TrayContext.cs` – display modes, menu, background sampling thread
 - `.github/workflows/build.yml` – builds and smoke-tests the app on Windows for every push
+- `.github/workflows/release.yml` – publishes a GitHub Release when a `v*` tag is pushed
+- `Updater.cs` – self-update from GitHub Releases
 - `Settings.cs` – settings in `HKCU\Software\TaskbarMonitor`, startup entry in `HKCU\...\Run`

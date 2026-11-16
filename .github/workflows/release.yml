@@ -1,0 +1,62 @@
+name: Release
+
+# Publish a version: push a tag like v1.2.0  (git tag v1.2.0 && git push origin v1.2.0)
+# Builds both exes on Windows, stamps them for self-update, and attaches them to a GitHub Release.
+# Users always get the newest via .../releases/latest/download/TaskbarMonitor.exe
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build
+        shell: pwsh
+        run: |
+          if ($env:TAG -notmatch '^v(\d+\.\d+\.\d+)$') { throw "Tag must look like v1.2.3, got '$env:TAG'" }
+          $v = $Matches[1]
+          dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true `
+            -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none `
+            -p:Version=$v -p:UpdateAsset=TaskbarMonitor.exe -o out\standalone
+          if ($LASTEXITCODE) { throw "standalone build failed" }
+          dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:DebugType=none `
+            -p:Version=$v -p:UpdateAsset=TaskbarMonitor-small.exe -o out\small
+          if ($LASTEXITCODE) { throw "small build failed" }
+          New-Item -ItemType Directory -Force release | Out-Null
+          Copy-Item out\standalone\TaskbarMonitor.exe release\TaskbarMonitor.exe
+          Copy-Item out\small\TaskbarMonitor.exe release\TaskbarMonitor-small.exe
+
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          $p = Start-Process release\TaskbarMonitor.exe -PassThru
+          Start-Sleep -Seconds 15
+          if ($p.HasExited) { throw "TaskbarMonitor exited early (exit code $($p.ExitCode))" }
+          Stop-Process -Id $p.Id
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = @"
+          **Download:** [TaskbarMonitor.exe](https://github.com/${{ github.repository }}/releases/download/$env:TAG/TaskbarMonitor.exe) (runs on any Windows 10/11 PC, nothing to install).
+
+          Smaller alternative: TaskbarMonitor-small.exe needs the [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0).
+
+          Already installed? It updates itself automatically within a few hours, or right-click it → Updates → Check for updates now.
+          "@
+          gh release create $env:TAG release\TaskbarMonitor.exe release\TaskbarMonitor-small.exe `
+            --title "Taskbar Monitor $env:TAG" --notes $notes --generate-notes

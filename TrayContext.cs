@@ -51,6 +51,9 @@ internal sealed class TrayContext : ApplicationContext
     private TaskbarWidget? _widget;
     private DateTime _nextWidgetAttempt = DateTime.MinValue;
     private DisplayMode _mode;
+    private bool _updating;
+    private static readonly TimeSpan UpdateFirstCheck = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan UpdateInterval = TimeSpan.FromHours(6);
     private Metrics _shown;
 
     private readonly ContextMenuStrip _menu;
@@ -157,6 +160,7 @@ internal sealed class TrayContext : ApplicationContext
             intervalMenu,
             startupItem,
             new ToolStripMenuItem("Open Task Manager", null, (_, _) => OpenTaskManager()),
+            BuildUpdatesMenu(),
             new ToolStripSeparator(),
             new ToolStripMenuItem("Exit", null, (_, _) => ExitThread()),
         });
@@ -171,6 +175,52 @@ internal sealed class TrayContext : ApplicationContext
         // ----- Sampling thread -----
         _sampler = new Thread(SampleLoop) { IsBackground = true, Name = "Sampler", Priority = ThreadPriority.BelowNormal };
         _sampler.Start();
+
+        // ----- Automatic updates: first check a minute after start, then every 6 hours -----
+        var updateTimer = new System.Windows.Forms.Timer { Interval = (int)UpdateFirstCheck.TotalMilliseconds };
+        updateTimer.Tick += async (_, _) =>
+        {
+            updateTimer.Interval = (int)UpdateInterval.TotalMilliseconds;
+            if (Settings.AutoUpdate && Updater.IsReleaseBuild) await CheckForUpdates(manual: false);
+        };
+        updateTimer.Start();
+    }
+
+    private ToolStripMenuItem BuildUpdatesMenu()
+    {
+        var menu = new ToolStripMenuItem("Updates");
+        menu.DropDownItems.Add(new ToolStripMenuItem($"Version {Updater.VersionText}") { Enabled = false });
+        menu.DropDownItems.Add(new ToolStripMenuItem("Check for updates now", null, async (_, _) => await CheckForUpdates(manual: true)));
+        var auto = new ToolStripMenuItem("Update automatically") { Checked = Settings.AutoUpdate, CheckOnClick = true };
+        auto.CheckedChanged += (_, _) => Settings.AutoUpdate = auto.Checked;
+        menu.DropDownItems.Add(auto);
+        return menu;
+    }
+
+    /// <summary>Checks GitHub for a newer release; if found, installs it and restarts into it.
+    /// Automatic checks are silent; a manual check reports the result.</summary>
+    private async Task CheckForUpdates(bool manual)
+    {
+        if (_updating || _stopping) return;
+        _updating = true;
+        try
+        {
+            var result = await Task.Run(() => Updater.CheckAndInstallAsync());
+            if (result.Status == Updater.Status.Updated)
+            {
+                if (manual)
+                    MessageBox.Show(result.Message + " Taskbar Monitor will restart now.", "Taskbar Monitor",
+                                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                Updater.StartNewVersion();
+                ExitThread();
+            }
+            else if (manual)
+            {
+                MessageBox.Show(result.Message, "Taskbar Monitor", MessageBoxButtons.OK,
+                                result.Status == Updater.Status.Failed ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
+            }
+        }
+        finally { _updating = false; }
     }
 
     private IEnumerable<MetricDef> ShownMetrics() => AllMetrics.Where(m => _shown.HasFlag(m.Flag));

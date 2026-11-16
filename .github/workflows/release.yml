@@ -99,6 +99,10 @@ jobs:
           $prev = gh release list --repo "${{ github.repository }}" --json tagName --jq '.[].tagName' |
                   Where-Object { $_ -ne $env:TAG } | Select-Object -First 1
           if (-not $prev) { Write-Host "No previous release to update from; skipping."; exit 0 }
+          if ([version]$prev.TrimStart('v') -lt [version]'1.0.3') {
+            Write-Host "$prev uses the old update method (fixed in 1.0.3), which can't restart itself; skipping."
+            exit 0
+          }
           New-Item -ItemType Directory -Force updtest | Out-Null
           gh release download $prev --repo "${{ github.repository }}" --pattern TaskbarMonitor.exe --dir updtest
           ./.github/update-test.ps1 -Exe updtest\TaskbarMonitor.exe -ExpectedVersion $env:VERSION

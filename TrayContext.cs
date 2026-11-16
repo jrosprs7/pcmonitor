@@ -206,14 +206,14 @@ internal sealed class TrayContext : ApplicationContext
         try
         {
             Log.Write(manual ? "Checking for updates (manual)" : "Checking for updates");
-            var result = await Task.Run(() => Updater.CheckAndInstallAsync());
+            var result = await Task.Run(() => Updater.CheckAndDownloadAsync());
             Log.Write($"Update check: {result.Status}: {result.Message}");
             if (result.Status == Updater.Status.Updated)
             {
                 if (manual)
-                    MessageBox.Show(result.Message + " Taskbar Monitor will restart now.", "Taskbar Monitor",
+                    MessageBox.Show(result.Message + " Taskbar Monitor will restart to install it.", "Taskbar Monitor",
                                     MessageBoxButtons.OK, MessageBoxIcon.Information);
-                Updater.StartNewVersion();
+                Updater.StartInstaller();
                 ExitThread();
             }
             else if (manual)

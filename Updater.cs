@@ -11,9 +11,13 @@ namespace TaskbarMonitor;
 /// it stamps the name of the matching release file (standalone or small) into the exe. Local and CI
 /// builds have no stamp, so they never replace themselves.
 ///
-/// Update steps: download the new exe next to the running one (*.new), check it, rename the running exe
-/// to *.old (Windows allows renaming a running exe), move the new one into place, start it with
-/// --updated (it waits for this copy to exit), and exit. The new copy deletes *.old on start-up.
+/// Update steps (the running exe is never renamed or touched while it runs: the app is a single-file
+/// bundle that loads parts of itself from its own file on demand):
+///   1. Download the new exe next to the running one as TaskbarMonitor.update.exe and check it.
+///   2. Start it with "--install-update &lt;pid&gt; &lt;path&gt;", then shut down normally.
+///   3. The installer waits for the old copy to exit, copies itself over TaskbarMonitor.exe,
+///      starts it with --updated, and exits.
+///   4. The new copy deletes TaskbarMonitor.update.exe on start-up.
 /// </summary>
 internal static class Updater
 {
@@ -21,6 +25,8 @@ internal static class Updater
 
     public enum Status { UpToDate, Updated, Failed, NotAvailable }
     public sealed record Result(Status Status, string Message, Version? Latest = null);
+
+    private static string? _pendingInstaller; // downloaded, checked update waiting to be installed
 
     public static Version Current => Normalize(Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0));
 
@@ -31,9 +37,15 @@ internal static class Updater
 
     public static bool IsReleaseBuild => AssetName is not null;
 
-    public static string VersionText => $"{Current.ToString(3)}{(IsReleaseBuild ? "" : " (dev build)")}";
+    private static string? _versionText;
+    public static string VersionText => _versionText ??= $"{Current.ToString(3)}{(IsReleaseBuild ? "" : " (dev build)")}";
 
-    public static async Task<Result> CheckAndInstallAsync(CancellationToken ct = default)
+    private static string UpdateFileFor(string exe) =>
+        Path.Combine(Path.GetDirectoryName(exe)!, Path.GetFileNameWithoutExtension(exe) + ".update.exe");
+
+    /// <summary>Checks for a newer release and, if there is one, downloads and verifies it.
+    /// Status.Updated means it is ready: call <see cref="StartInstaller"/> and exit.</summary>
+    public static async Task<Result> CheckAndDownloadAsync(CancellationToken ct = default)
     {
         string? asset = AssetName;
         if (asset is null)
@@ -41,6 +53,21 @@ internal static class Updater
 
         string? exe = Environment.ProcessPath;
         if (exe is null) return new(Status.Failed, "Couldn't find the app's own file.");
+
+        // Test hook (used by CI): treat a local exe as the latest release, to test the full update
+        // hand-over without publishing anything.
+        if (Environment.GetEnvironmentVariable("TASKBARMONITOR_TEST_UPDATE_FILE") is { Length: > 0 } testFile)
+        {
+            try
+            {
+                var testVersion = Normalize(Version.Parse(FileVersionInfo.GetVersionInfo(testFile).FileVersion ?? "0.0"));
+                if (testVersion <= Current) return new(Status.UpToDate, $"You have the latest version ({Current.ToString(3)}).", testVersion);
+                File.Copy(testFile, UpdateFileFor(exe), overwrite: true);
+                _pendingInstaller = UpdateFileFor(exe);
+                return new(Status.Updated, $"Version {testVersion.ToString(3)} is ready.", testVersion);
+            }
+            catch (Exception ex) { return new(Status.Failed, "Test update failed: " + ex.Message); }
+        }
 
         try
         {
@@ -76,7 +103,7 @@ internal static class Updater
             if (url is null || !url.StartsWith($"https://github.com/{Repo}/releases/download/", StringComparison.Ordinal))
                 return new(Status.Failed, $"Version {latest.ToString(3)} has no {asset} download.");
 
-            string newPath = exe + ".new", oldPath = exe + ".old";
+            string newPath = UpdateFileFor(exe);
             try
             {
                 await using (var file = File.Create(newPath))
@@ -100,16 +127,8 @@ internal static class Updater
                 return new(Status.Failed, $"The downloaded update failed a safety check ({problem}), so it wasn't installed.");
             }
 
-            // Swap: running exe -> .old, new -> exe (roll back if the second move fails).
-            TryDelete(oldPath);
-            File.Move(exe, oldPath);
-            try { File.Move(newPath, exe); }
-            catch
-            {
-                File.Move(oldPath, exe);
-                throw;
-            }
-            return new(Status.Updated, $"Updated to version {latest.ToString(3)}.", latest);
+            _pendingInstaller = newPath;
+            return new(Status.Updated, $"Version {latest.ToString(3)} is ready.", latest);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
@@ -117,43 +136,82 @@ internal static class Updater
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or JsonException or KeyNotFoundException or InvalidOperationException)
         {
-            TryDelete(exe + ".new");
+            TryDelete(UpdateFileFor(exe));
             return new(Status.Failed, "Update failed: " + ex.Message);
         }
     }
 
     /// <summary>
-    /// Start the freshly installed copy (it waits for this one to exit). The caller should exit right after.
-    /// As a safety net, this process ends itself if it is still running 8 seconds later.
+    /// Starts the downloaded installer. The caller must exit right after. As a safety net, this process
+    /// ends itself if it is still running 10 seconds later (the installer would end it after 20 s anyway).
     /// </summary>
-    public static void StartNewVersion()
+    public static void StartInstaller()
     {
-        if (Environment.ProcessPath is not string exe) return;
-        Log.Write("Starting the new version and exiting");
-        Process.Start(new ProcessStartInfo(exe, $"--updated {Environment.ProcessId}") { UseShellExecute = false })?.Dispose();
+        if (_pendingInstaller is not string installer || Environment.ProcessPath is not string exe) return;
+        Log.Write("Starting the installer and exiting");
+        Process.Start(new ProcessStartInfo(installer, $"--install-update {Environment.ProcessId} \"{exe}\"")
+        {
+            UseShellExecute = false,
+        })?.Dispose();
         new Thread(() =>
         {
-            Thread.Sleep(8000);
-            Log.Write("Still running 8 s after the update; forcing exit");
+            Thread.Sleep(10000);
+            Log.Write("Still running 10 s after starting the installer; forcing exit");
             Process.GetCurrentProcess().Kill();
         }) { IsBackground = true, Name = "UpdateExitGuard" }.Start();
     }
 
+    /// <summary>Installer mode: runs from TaskbarMonitor.update.exe. Replaces the app and restarts it.</summary>
+    public static void RunInstaller(int oldPid, string target)
+    {
+        Log.Write($"Installer: waiting for the old copy (pid {oldPid}) to exit");
+        try
+        {
+            using var old = Process.GetProcessById(oldPid);
+            if (!old.WaitForExit(20000))
+            {
+                Log.Write("Installer: the old copy didn't exit; ending it");
+                old.Kill();
+                old.WaitForExit(5000);
+            }
+        }
+        catch (ArgumentException) { /* already exited */ }
+        catch (Exception ex) { Log.Write("Installer: " + ex.Message); }
+
+        string self = Environment.ProcessPath!;
+        bool copied = false;
+        for (int attempt = 1; attempt <= 30 && !copied; attempt++) // the file can stay locked briefly (e.g. antivirus)
+        {
+            try
+            {
+                File.Copy(self, target, overwrite: true);
+                copied = true;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                if (attempt == 30) Log.Write("Installer: couldn't replace the app: " + ex.Message);
+                Thread.Sleep(1000);
+            }
+        }
+
+        Log.Write(copied ? "Installer: installed; starting the new version" : "Installer: restarting the current version");
+        Process.Start(new ProcessStartInfo(target, copied ? "--updated" : "") { UseShellExecute = false })?.Dispose();
+    }
+
     /// <summary>
-    /// Remove leftovers from a previous update. Runs on every start-up. Right after an update the old exe
-    /// can stay locked for a while (the old process is still shutting down, or antivirus is scanning it),
-    /// so keep retrying for a few minutes.
+    /// Remove leftovers from a previous update (the installer, plus *.old / *.new from versions 1.0.0-1.0.2).
+    /// Runs on every start-up and keeps retrying for a few minutes, as files can stay locked for a while.
     /// </summary>
     public static void CleanUpAfterUpdate()
     {
         if (Environment.ProcessPath is not string exe) return;
-        if (!File.Exists(exe + ".old") && !File.Exists(exe + ".new")) return;
+        string[] leftovers = { UpdateFileFor(exe), exe + ".old", exe + ".new" };
+        if (!leftovers.Any(File.Exists)) return;
         Task.Run(async () =>
         {
-            for (int i = 0; i < 90 && (File.Exists(exe + ".old") || File.Exists(exe + ".new")); i++)
+            for (int i = 0; i < 90 && leftovers.Any(File.Exists); i++)
             {
-                TryDelete(exe + ".old");
-                TryDelete(exe + ".new");
+                foreach (var f in leftovers) TryDelete(f);
                 await Task.Delay(2000);
             }
         });

@@ -15,6 +15,12 @@ internal static class Program
             return;
         }
 
+        if (args.Length >= 3 && args[0] == "--install-update" && int.TryParse(args[1], out int oldCopy))
+        {
+            Updater.RunInstaller(oldCopy, args[2]);
+            return;
+        }
+
         // Log unexpected errors instead of showing a crash dialog (or silently hanging).
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
         Application.ThreadException += (_, e) => Log.Write("Unhandled UI error: " + e.Exception);
@@ -44,7 +50,7 @@ internal static class Program
         }
         else if (justUpdated) Log.Write("Started after update");
 
-        Updater.CleanUpAfterUpdate(); // removes TaskbarMonitor.exe.old left by an update, if any
+        Updater.CleanUpAfterUpdate(); // removes files left by an update, if any
 
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();

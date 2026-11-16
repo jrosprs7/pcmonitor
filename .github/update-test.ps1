@@ -19,17 +19,19 @@ do {
 Write-Host "File version is now $ver"
 
 # Give the hand-over and the clean-up time to finish.
+$dir = Split-Path $Exe
+$leftoverFiles = @("$Exe.old", "$Exe.new", (Join-Path $dir 'TaskbarMonitor.update.exe'))
 $settle = (Get-Date).AddSeconds(90)
 do {
   Start-Sleep -Seconds 5
   $oldAlive = [bool](Get-Process -Id $old.Id -ErrorAction SilentlyContinue)
-  $leftover = Test-Path "$Exe.old"
+  $leftover = @($leftoverFiles | Where-Object { Test-Path $_ })
 } while (($oldAlive -or $leftover) -and (Get-Date) -lt $settle)
 Start-Sleep -Seconds 3
 
 $procs = @(Get-Process TaskbarMonitor -ErrorAction SilentlyContinue)
 $procs | Format-Table Id, StartTime, Path -AutoSize | Out-String | Write-Host
-$new = $procs | Where-Object { $_.Id -ne $old.Id }
+$new = $procs | Where-Object { $_.Id -ne $old.Id -and $_.Path -eq $Exe }
 
 $log = Join-Path $env:LOCALAPPDATA 'TaskbarMonitor\TaskbarMonitor.log'
 if (Test-Path $log) { Write-Host "---- app log ----"; Get-Content $log | Write-Host; Write-Host "-----------------" }
@@ -40,6 +42,6 @@ $errors = @()
 if ($ver -notlike "$ExpectedVersion*") { $errors += "exe is still version $ver" }
 if ($oldAlive) { $errors += "the old copy (pid $($old.Id)) is still running" }
 if (-not $new) { $errors += "the new version is not running" }
-if ($leftover) { $errors += "$Exe.old was not cleaned up" }
+if ($leftover) { $errors += "leftover files: $($leftover -join ', ')" }
 if ($errors) { throw "Update test failed: " + ($errors -join '; ') }
 Write-Host "Update test passed: $before -> $ver, old copy exited, new copy running, no leftovers."

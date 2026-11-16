@@ -69,21 +69,19 @@ jobs:
           Stop-Process -Id $p.Id
           Write-Host "App ran without crashing."
 
-      # This commit's code, labelled as an old version, must update itself to the latest release.
-      # Tests the "old copy" side of updating without publishing anything. Needs a public repo.
-      - name: Update test (this code as v0.0.1 updates itself to the latest release)
-        if: github.event.repository.private == false
+      # Full auto-update hand-over with this commit's code on both sides: a v0.0.1 build must replace
+      # itself with a v0.0.2 build (served from a local file via the app's test hook, not GitHub).
+      - name: Update test (this code, v0.0.1 -> v0.0.2)
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          $latest = (gh release view --repo "${{ github.repository }}" --json tagName --jq .tagName).TrimStart('v')
-          if (-not $latest) { Write-Host "No release yet; skipping."; exit 0 }
-          dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true `
-            -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none `
-            -p:Version=0.0.1 -p:UpdateAsset=TaskbarMonitor.exe -o updtest
+          $common = @('-c', 'Release', '-r', 'win-x64', '--self-contained', 'true', '-p:PublishSingleFile=true',
+                      '-p:EnableCompressionInSingleFile=true', '-p:IncludeNativeLibrariesForSelfExtract=true',
+                      '-p:DebugType=none', '-p:UpdateAsset=TaskbarMonitor.exe')
+          dotnet publish @common -p:Version=0.0.1 -o updtest\old
+          dotnet publish @common -p:Version=0.0.2 -o updtest\new
           if ($LASTEXITCODE) { throw "build failed" }
-          ./.github/update-test.ps1 -Exe updtest\TaskbarMonitor.exe -ExpectedVersion $latest
+          $env:TASKBARMONITOR_TEST_UPDATE_FILE = (Resolve-Path updtest\new\TaskbarMonitor.exe).Path
+          ./.github/update-test.ps1 -Exe updtest\old\TaskbarMonitor.exe -ExpectedVersion 0.0.2
 
       - uses: actions/upload-artifact@v4
         if: always()
